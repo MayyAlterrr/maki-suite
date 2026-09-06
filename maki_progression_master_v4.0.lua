@@ -106,6 +106,38 @@ local function isSpecialEventItem(itemName)
 end
 
 -- ========================================================================
+--  UNIVERSAL EXECUTOR & MOBILE (DELTA) COMPATIBLE FILE I/O
+-- ========================================================================
+local function safeIsFile(fileName)
+    if typeof(isfile) == "function" then
+        local ok, res = pcall(isfile, fileName)
+        if ok and res ~= nil then return res end
+    end
+    if typeof(readfile) == "function" then
+        local ok, res = pcall(readfile, fileName)
+        if ok and res and #res > 0 then return true end
+    end
+    return false
+end
+
+local function safeReadFile(fileName)
+    if typeof(readfile) == "function" then
+        local ok, res = pcall(readfile, fileName)
+        if ok and res and #res > 0 then
+            return res
+        end
+    end
+    return nil
+end
+
+local function safeWriteFile(fileName, content)
+    if typeof(writefile) == "function" then
+        return pcall(writefile, fileName, content)
+    end
+    return false
+end
+
+-- ========================================================================
 --  CONFIG & PERSISTENCE
 -- ========================================================================
 local ConfigFileName = "dqr_party_config.json"
@@ -133,10 +165,12 @@ local Config = {
 }
 
 local function loadConfig()
-    if isfile and isfile(ConfigFileName) then
-        local ok, parsed = pcall(function() return HttpService:JSONDecode(readfile(ConfigFileName)) end)
+    local raw = safeReadFile(ConfigFileName)
+    if raw and #raw > 0 then
+        local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok and type(parsed) == "table" then
             for k, v in pairs(parsed) do Config[k] = v end
+            print(string.format("[Maki Config 📂] Loaded config! Main: '%s', Alts: %d", tostring(Config.CarryUsername), #(Config.AltUsernames or {})))
         end
     end
     if not Config.CarryUsername then Config.CarryUsername = "" end
@@ -155,8 +189,9 @@ local function loadConfig()
 end
 
 local function saveConfig()
-    if writefile then
-        pcall(function() writefile(ConfigFileName, HttpService:JSONEncode(Config)) end)
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(Config) end)
+    if ok and encoded then
+        safeWriteFile(ConfigFileName, encoded)
     end
 end
 
@@ -705,8 +740,8 @@ local isPlaybackActive = false
 local function loadCurrentDungeonMap()
     local slug, rawName = getDungeonSlug()
     local fileName = string.format("dqr_map_%s.json", slug)
-    if not isfile or not isfile(fileName) then return false end
-    local raw = readfile(fileName)
+    local raw = safeReadFile(fileName)
+    if not raw or #raw == 0 then return false end
     local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
     if ok and parsed and parsed.points and #parsed.points > 0 then
         loadedWaypoints = parsed.points
@@ -988,9 +1023,9 @@ task.spawn(function()
 
                 local slug, _ = getDungeonSlug()
                 local fileName = string.format("dqr_highway_%s.json", slug)
+                local raw = safeReadFile(fileName)
 
-                if isfile and isfile(fileName) then
-                    local raw = readfile(fileName)
+                if raw and #raw > 0 then
                     local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
                     local waypoints = (ok and parsed and parsed.points) or {}
 
@@ -1977,6 +2012,7 @@ carryInput.TextSize = 8.5
 carryInput.Font = Enum.Font.Gotham
 carryInput.PlaceholderText = "👑 Enter Main/Carry Username..."
 carryInput.Text = Config.CarryUsername or ""
+carryInput.ClearTextOnFocus = false
 Instance.new("UICorner", carryInput).CornerRadius = UDim.new(0, 4)
 
 local carrySaveBtn = Instance.new("TextButton", pageAlts)
@@ -1990,25 +2026,21 @@ carrySaveBtn.Text = "💾 SET MAIN"
 Instance.new("UICorner", carrySaveBtn).CornerRadius = UDim.new(0, 4)
 
 local function applyCarryUsername(name)
-    Config.CarryUsername = name:gsub("%s+", "")
+    local clean = (name or ""):gsub("%s+", "")
+    Config.CarryUsername = clean
     saveConfig()
     updateCarryRole()
     carryInput.Text = Config.CarryUsername
     mainActionBtn.BackgroundColor3 = isCarry and Color3.fromRGB(0, 160, 120) or Color3.fromRGB(140, 80, 220)
     mainActionBtn.Text = isCarry and "🚀 LAUNCH CARRY LADDER" or "🛡️ ALT STANDBY (Auto-Sync Active)"
-    carrySaveBtn.Text = "✅ SAVED"
+    carrySaveBtn.Text = "✅ SAVED!"
+    print(string.format("[Maki Config 💾] Saved Main Username: '%s'", Config.CarryUsername))
     task.delay(1.0, function() carrySaveBtn.Text = "💾 SET MAIN" end)
 end
 
-carrySaveBtn.Activated:Connect(function()
-    applyCarryUsername(carryInput.Text)
-end)
-
-carryInput.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        applyCarryUsername(carryInput.Text)
-    end
-end)
+carrySaveBtn.MouseButton1Click:Connect(function() applyCarryUsername(carryInput.Text) end)
+carrySaveBtn.Activated:Connect(function() applyCarryUsername(carryInput.Text) end)
+carryInput.FocusLost:Connect(function() applyCarryUsername(carryInput.Text) end)
 
 local altInput = Instance.new("TextBox", pageAlts)
 altInput.Size = UDim2.new(0.68, -4, 0, 24)
@@ -2018,6 +2050,7 @@ altInput.TextColor3 = Color3.fromRGB(255, 255, 255)
 altInput.TextSize = 8.5
 altInput.Font = Enum.Font.Gotham
 altInput.PlaceholderText = "👥 Enter Alt Username..."
+altInput.ClearTextOnFocus = false
 Instance.new("UICorner", altInput).CornerRadius = UDim.new(0, 4)
 
 local addAltBtn = Instance.new("TextButton", pageAlts)
@@ -2029,6 +2062,31 @@ addAltBtn.TextSize = 8.5
 addAltBtn.Font = Enum.Font.GothamBold
 addAltBtn.Text = "➕ ADD ALT"
 Instance.new("UICorner", addAltBtn).CornerRadius = UDim.new(0, 4)
+
+local function handleAddAlt()
+    local text = (altInput.Text or ""):gsub("%s+", "")
+    if #text > 0 then
+        local exists = false
+        for _, ex in ipairs(Config.AltUsernames) do
+            if ex:lower() == text:lower() then exists = true break end
+        end
+        if not exists then
+            table.insert(Config.AltUsernames, text)
+            saveConfig()
+            print(string.format("[Maki Config 💾] Added Alt: '%s' (Total: %d)", text, #Config.AltUsernames))
+        end
+        altInput.Text = ""
+        refreshAltsUI()
+    end
+end
+
+addAltBtn.MouseButton1Click:Connect(handleAddAlt)
+addAltBtn.Activated:Connect(handleAddAlt)
+altInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        handleAddAlt()
+    end
+end)
 
 local altsScroll = Instance.new("ScrollingFrame", pageAlts)
 altsScroll.Size = UDim2.new(1, 0, 0, 162)
@@ -2121,15 +2179,7 @@ local function refreshAltsUI()
     altsScroll.CanvasSize = UDim2.new(0, 0, 0, #Config.AltUsernames * 34)
 end
 
-addAltBtn.Activated:Connect(function()
-    local text = altInput.Text:gsub("%s+", "")
-    if #text > 0 then
-        table.insert(Config.AltUsernames, text)
-        altInput.Text = ""
-        saveConfig()
-        refreshAltsUI()
-    end
-end)
+-- addAltBtn handled above
 
 refreshAltsUI()
 

@@ -82,6 +82,38 @@ local teleToLobbyRemote          = remotes and (remotes:FindFirstChild("teleToLo
 local announceDropRemote         = remotes and remotes:FindFirstChild("AnnounceDrop")
 
 -- ========================================================================
+--  UNIVERSAL EXECUTOR & MOBILE (DELTA) COMPATIBLE FILE I/O
+-- ========================================================================
+local function safeIsFile(fileName)
+    if typeof(isfile) == "function" then
+        local ok, res = pcall(isfile, fileName)
+        if ok and res ~= nil then return res end
+    end
+    if typeof(readfile) == "function" then
+        local ok, res = pcall(readfile, fileName)
+        if ok and res and #res > 0 then return true end
+    end
+    return false
+end
+
+local function safeReadFile(fileName)
+    if typeof(readfile) == "function" then
+        local ok, res = pcall(readfile, fileName)
+        if ok and res and #res > 0 then
+            return res
+        end
+    end
+    return nil
+end
+
+local function safeWriteFile(fileName, content)
+    if typeof(writefile) == "function" then
+        return pcall(writefile, fileName, content)
+    end
+    return false
+end
+
+-- ========================================================================
 --  CONFIG & PERSISTENCE
 -- ========================================================================
 local ConfigFileName = "dqr_party_config.json"
@@ -106,8 +138,9 @@ local Config = {
 }
 
 local function loadConfig()
-    if isfile and isfile(ConfigFileName) then
-        local ok, parsed = pcall(function() return HttpService:JSONDecode(readfile(ConfigFileName)) end)
+    local raw = safeReadFile(ConfigFileName)
+    if raw and #raw > 0 then
+        local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok and type(parsed) == "table" then
             for k, v in pairs(parsed) do
                 if k ~= "HardcoreMode" and k ~= "SwarmFpsCap" and k ~= "AltFpsCap" and k ~= "CarryFpsCap" then
@@ -117,6 +150,7 @@ local function loadConfig()
             if parsed.HardcoreMode ~= nil then
                 Config.HardcoreMode = parsed.HardcoreMode
             end
+            print(string.format("[Maki Config 📂] Loaded config! Main: '%s', Alts: %d", tostring(Config.CarryUsername), #(Config.AltUsernames or {})))
         end
     end
     if not Config.CarryUsername then Config.CarryUsername = "" end
@@ -130,8 +164,9 @@ local function loadConfig()
 end
 
 local function saveConfig()
-    if writefile then
-        pcall(function() writefile(ConfigFileName, HttpService:JSONEncode(Config)) end)
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(Config) end)
+    if ok and encoded then
+        safeWriteFile(ConfigFileName, encoded)
     end
 end
 
@@ -1243,6 +1278,7 @@ carryInput.TextSize = 8.5
 carryInput.Font = Enum.Font.Gotham
 carryInput.PlaceholderText = "👑 Enter Main/Carry Username..."
 carryInput.Text = Config.CarryUsername or ""
+carryInput.ClearTextOnFocus = false
 Instance.new("UICorner", carryInput).CornerRadius = UDim.new(0, 4)
 
 local carrySaveBtn = Instance.new("TextButton", pageAlts)
@@ -1256,24 +1292,20 @@ carrySaveBtn.Text = "💾 SET MAIN"
 Instance.new("UICorner", carrySaveBtn).CornerRadius = UDim.new(0, 4)
 
 local function applyMainUsername(name)
-    Config.CarryUsername = name:gsub("%s+", "")
+    local clean = (name or ""):gsub("%s+", "")
+    Config.CarryUsername = clean
     saveConfig()
     updateMainRole()
     isCarry = isMain
     carryInput.Text = Config.CarryUsername
-    carrySaveBtn.Text = "✅ SAVED"
+    carrySaveBtn.Text = "✅ SAVED!"
+    print(string.format("[Maki Config 💾] Saved Main Username: '%s'", Config.CarryUsername))
     task.delay(1.0, function() carrySaveBtn.Text = "💾 SET MAIN" end)
 end
 
-carrySaveBtn.Activated:Connect(function()
-    applyMainUsername(carryInput.Text)
-end)
-
-carryInput.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        applyMainUsername(carryInput.Text)
-    end
-end)
+carrySaveBtn.MouseButton1Click:Connect(function() applyMainUsername(carryInput.Text) end)
+carrySaveBtn.Activated:Connect(function() applyMainUsername(carryInput.Text) end)
+carryInput.FocusLost:Connect(function() applyMainUsername(carryInput.Text) end)
 
 local altInput = Instance.new("TextBox", pageAlts)
 altInput.Size = UDim2.new(0.68, -4, 0, 24)
@@ -1283,6 +1315,7 @@ altInput.TextColor3 = Color3.fromRGB(255, 255, 255)
 altInput.TextSize = 8.5
 altInput.Font = Enum.Font.Gotham
 altInput.PlaceholderText = "👥 Enter Alt Username..."
+altInput.ClearTextOnFocus = false
 Instance.new("UICorner", altInput).CornerRadius = UDim.new(0, 4)
 
 local addAltBtn = Instance.new("TextButton", pageAlts)
@@ -1294,6 +1327,31 @@ addAltBtn.TextSize = 8.5
 addAltBtn.Font = Enum.Font.GothamBold
 addAltBtn.Text = "➕ ADD ALT"
 Instance.new("UICorner", addAltBtn).CornerRadius = UDim.new(0, 4)
+
+local function handleAddAltEF()
+    local text = (altInput.Text or ""):gsub("%s+", "")
+    if #text > 0 then
+        local exists = false
+        for _, ex in ipairs(Config.AltUsernames) do
+            if ex:lower() == text:lower() then exists = true break end
+        end
+        if not exists then
+            table.insert(Config.AltUsernames, text)
+            saveConfig()
+            print(string.format("[Maki Config 💾] Added Alt: '%s' (Total: %d)", text, #Config.AltUsernames))
+        end
+        altInput.Text = ""
+        updateAltsTracker()
+    end
+end
+
+addAltBtn.MouseButton1Click:Connect(handleAddAltEF)
+addAltBtn.Activated:Connect(handleAddAltEF)
+altInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        handleAddAltEF()
+    end
+end)
 
 local altsScroll = Instance.new("ScrollingFrame", pageAlts)
 altsScroll.Size = UDim2.new(1, 0, 0, 174)
@@ -1367,18 +1425,7 @@ local function updateAltsTracker()
     end
 end
 
-addAltBtn.Activated:Connect(function()
-    local name = altInput.Text:gsub("%s+", "")
-    if #name > 0 then
-        for _, existing in ipairs(Config.AltUsernames) do
-            if existing:lower() == name:lower() then return end
-        end
-        table.insert(Config.AltUsernames, name)
-        saveConfig()
-        altInput.Text = ""
-        updateAltsTracker()
-    end
-end)
+-- addAltBtn handled above
 
 task.spawn(function()
     while _G.MAKI_EF_SWARM_RUNNING do
