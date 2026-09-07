@@ -1056,45 +1056,115 @@ local function triggerCarryStartBossRaid()
 end
 
 -- ========================================================================
---  NEXT TIER / REPLAY ENGINE
+--  NEXT TIER / REPLAY ENGINE (INFINITE NON-STOP BOSS RAID FARM)
 -- ========================================================================
-local function handleNextTierAndReplay()
-    local curTier = getCurrentRaidTier()
-    print(string.format("[Maki Replay] ⚡ Boss Defeated in Tier %d! Processing Replay / Next Tier...", curTier))
+local isProcessingReplay = false
+local function isRaidFinished()
+    local prog = getMatchProgress()
+    if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog:find("kill") or prog:find("won") or prog:find("win") then
+        return true
+    end
+
+    local dungeon = Workspace:FindFirstChild("dungeon")
+    local bossRoom = dungeon and (dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room"))
+    local finished = bossRoom and (bossRoom:FindFirstChild("dungeonFinished") or bossRoom:FindFirstChild("finished"))
+    if finished and finished:IsA("BoolValue") and finished.Value == true then
+        return true
+    end
 
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
-
-    if Config.AutoNextTier and curTier < 30 and pG then
-        for _, gui in ipairs(pG:GetDescendants()) do
-            if gui:IsA("GuiButton") then
-                local bText = (gui.Text or ""):lower()
-                local bName = gui.Name:lower()
-                if bText:find("next") or bText:find("upgrade") or bName:find("nexttier") or bName:find("upgradetier") then
-                    print(string.format("[Maki Next Tier] 🌟 Clicking Next Tier Button (%s)!", gui.Name))
-                    pcall(function()
-                        for _, c in ipairs(getconnections(gui.Activated)) do c:Fire() end
-                        for _, c in ipairs(getconnections(gui.MouseButton1Click)) do c:Fire() end
-                    end)
-                end
+    if pG then
+        for _, name in ipairs({"dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "ReplayDungeonButton"}) do
+            local g = pG:FindFirstChild(name)
+            if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
+                return true
             end
         end
     end
 
-    if pG then
-        local rBtn = pG:FindFirstChild("ReplayDungeonButton") and pG.ReplayDungeonButton:FindFirstChild("Replay", true)
-        if rBtn then
-            pcall(function()
-                for _, c in ipairs(getconnections(rBtn.Activated)) do c:Fire() end
-                for _, c in ipairs(getconnections(rBtn.MouseButton1Click)) do c:Fire() end
-            end)
-        end
-    end
+    return false
+end
 
-    if replayRemote then
-        pcall(function()
-            replayRemote:FireServer()
-        end)
-    end
+local function handleNextTierAndReplay()
+    if isProcessingReplay then return end
+    isProcessingReplay = true
+
+    task.spawn(function()
+        local curTier = getCurrentRaidTier()
+        print(string.format("[Maki Replay] ⚡ Boss Defeated in Tier %d! Starting continuous Next Tier / Replay spam...", curTier))
+
+        executeUniversalAutoSell()
+
+        local startTime = os.clock()
+        while _G.MAKI_BOSS_RAID_RUNNING and isRaidOrDungeon() and (os.clock() - startTime < 12.0) do
+            -- 1. Upgrade Key / Next Tier if tier < 30
+            if Config.AutoNextTier and curTier < 30 then
+                if upgradeKeyRemote then
+                    pcall(function() upgradeKeyRemote:FireServer() end)
+                end
+
+                local pG = LocalPlayer:FindFirstChild("PlayerGui")
+                if pG then
+                    for _, gui in ipairs(pG:GetChildren()) do
+                        if gui:IsA("ScreenGui") and gui.Enabled then
+                            for _, btn in ipairs(gui:GetDescendants()) do
+                                if btn:IsA("GuiButton") then
+                                    local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                                    local bName = btn.Name:lower()
+                                    if bText:find("next") or bText:find("upgrade") or bName:find("nexttier") or bName:find("upgradetier") or bName:find("upgrade") then
+                                        pcall(function()
+                                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. Fire Replay Remote & Click Replay Buttons
+            if replayRemote then
+                pcall(function() replayRemote:FireServer() end)
+                pcall(function() replayRemote:FireServer({ isHardcore = true, hardcore = true }) end)
+            end
+
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            if pG then
+                for _, gui in ipairs(pG:GetChildren()) do
+                    if gui:IsA("ScreenGui") and gui.Enabled then
+                        for _, btn in ipairs(gui:GetDescendants()) do
+                            if btn:IsA("GuiButton") then
+                                local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                                local bName = btn.Name:lower()
+                                if bText:find("replay") or bText:find("retry") or bName:find("replay") or bName:find("retry") or bName:find("playagain") then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            task.wait(0.35)
+        end
+
+        -- Failsafe: if still in finished raid after 12s, return to Main Lobby so carry re-hosts immediately
+        if isRaidOrDungeon() and _G.MAKI_BOSS_RAID_RUNNING and isRaidFinished() then
+            print("[Maki Replay] 🔄 Replay timed out after 12s, returning to Main Lobby to re-host...")
+            if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
+            task.wait(0.5)
+            pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
+        end
+
+        isProcessingReplay = false
+    end)
 end
 
 -- Alt Spawn Anchor & Safety
@@ -1139,10 +1209,8 @@ local raidFinishedHandled = false
 
 task.spawn(function()
     while _G.MAKI_BOSS_RAID_RUNNING do
-        task.wait(0.8)
+        task.wait(0.5)
         if isRaidOrDungeon() then
-            local prog = getMatchProgress()
-
             if isCarry and not isStagingStarted then
                 local altsReady = areAllAltsPresent()
                 if altsReady then
@@ -1163,12 +1231,9 @@ task.spawn(function()
                 executeInstantReadyUp()
             end
 
-            if (prog == "bosskilled" or prog == "victory" or prog == "complete") and not raidFinishedHandled then
+            if isRaidFinished() and not raidFinishedHandled then
                 raidFinishedHandled = true
-                executeUniversalAutoSell()
-
                 if isCarry then
-                    task.wait(2.5)
                     handleNextTierAndReplay()
                 end
             end
@@ -1176,10 +1241,11 @@ task.spawn(function()
             isStagingStarted = false
             raidFinishedHandled = false
             altSpawnPosition = nil
+            isProcessingReplay = false
 
             if isCarry and not isCreatingBossLobby then
-                print("[Maki Boss Host] ⏳ Main Lobby arrived! Launching Boss Raid in 5s...")
-                task.wait(5.0)
+                print("[Maki Boss Host] ⏳ Main Lobby arrived! Launching Boss Raid in 4s...")
+                task.wait(4.0)
                 if isMainLobby() and _G.MAKI_BOSS_RAID_RUNNING then
                     carryCreateAndLaunchBossRaid()
                 end
