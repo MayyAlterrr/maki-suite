@@ -8,7 +8,7 @@
 --    3. Direct Boss Homing Navigation: No map recording needed! Carry finds the Boss and walks straight to it.
 --    4. Infinite Pulse Wave Elimination: Continuous Q/E spell rotation to burst the Boss down instantly.
 --    5. Highest Available Tier Selector: Automatically launches max unlocked tier (up to Tier 30).
---    6. Manual Join Request Approval: Popups remain on Carry screen for manual acceptance.
+--    6. Progression Master Instant Auto-Accept: showJoinRequest listener + joinRequestConfirm 0ms button fire.
 --    7. "Next Tier" & Replay Engine: Clicks Next Tier for < Tier 30, and loops Tier 30 for max gold/XP.
 --    8. 100% Protected Loot & Auto-Sell: Collect armors, EF/NL weapons, & Legendaries completely safe.
 --    9. Universal Mobile & PC Persistence: Live In-GUI Main/Alts configuration saved to dqr_party_config.json.
@@ -83,6 +83,7 @@ local addPlayerToWhitelistRemote = remotes and remotes:FindFirstChild("addPlayer
 local startDungeonRemote         = remotes and remotes:FindFirstChild("startDungeon")
 local changeStartValueRemote     = remotes and remotes:FindFirstChild("changeStartValue")
 local sendJoinRequestRemote      = remotes and remotes:FindFirstChild("sendJoinRequest")
+local showJoinRemote             = remotes and remotes:FindFirstChild("showJoinRequest")
 local joinDungeonRemote          = remotes and remotes:FindFirstChild("joinDungeon")
 local respondJoinRequestRemote   = remotes and remotes:FindFirstChild("respondJoinRequest")
 local readyUpRemote              = remotes and remotes:FindFirstChild("readyUp")
@@ -863,27 +864,97 @@ if announceDropRemote then
 end
 
 -- ========================================================================
---  MODULE 4: MANUAL JOIN REQUEST APPROVAL & ALT JOIN ENGINE
+--  MODULE 4: TRUE ZERO-LATENCY INSTANT AUTO-ACCEPT ENGINE (0ms APPROVAL)
+--  (EXACT PROGRESSION MASTER ARCHITECTURE)
 -- ========================================================================
--- Carry auto-accept and popup interception removed per configuration so
--- join request dialogs stay on screen for manual approval.
+local function instantAcceptAndDestroyPopup(gui)
+    if not gui or gui.Name ~= "joinRequestConfirm" then return end
+    if not isCarry or not Config.AutoAcceptJoins then return end
 
-task.spawn(function()
-    while _G.MAKI_BOSS_RAID_RUNNING do
-        if not isCarry and isMainLobby() and Config.CarryUsername and #Config.CarryUsername > 0 then
+    local cBtn = gui:FindFirstChild("confirm", true) and gui.confirm:FindFirstChild("TextButton", true)
+    if cBtn then
+        pcall(function()
+            for _, c in ipairs(getconnections(cBtn.MouseButton1Click)) do c:Fire() end
+            for _, c in ipairs(getconnections(cBtn.MouseButton1Down)) do c:Fire() end
+            for _, c in ipairs(getconnections(cBtn.Activated)) do c:Fire() end
+        end)
+    end
+
+    local pLbl = gui:FindFirstChild("prompt", true)
+    if pLbl and pLbl.Text and respondJoinRequestRemote then
+        for _, altName in ipairs(Config.AltUsernames) do
+            if pLbl.Text:lower():find(altName:lower()) then
+                pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
+            end
+        end
+    end
+
+    pcall(function() gui:Destroy() end)
+end
+
+local pGui = LocalPlayer:WaitForChild("PlayerGui")
+
+pGui.ChildAdded:Connect(function(child)
+    if child.Name == "joinRequestConfirm" then
+        instantAcceptAndDestroyPopup(child)
+    end
+end)
+
+if showJoinRemote and respondJoinRequestRemote then
+    showJoinRemote.OnClientEvent:Connect(function(requesterName, ...)
+        if isCarry and Config.AutoAcceptJoins then
+            local nameStr = tostring(requesterName)
             pcall(function()
-                if sendJoinRequestRemote then
-                    sendJoinRequestRemote:InvokeServer(Config.CarryUsername)
-                end
-                if playerJoinBossLobbyRemote then
-                    playerJoinBossLobbyRemote:InvokeServer(Config.CarryUsername)
-                end
-                if joinDungeonRemote then
-                    joinDungeonRemote:InvokeServer(Config.CarryUsername)
+                respondJoinRequestRemote:FireServer(nameStr, true)
+            end)
+            print(string.format("[Maki Instant Accept] ⚡ Instantly Approved Alt: %s (0ms)!", nameStr))
+
+            task.spawn(function()
+                for _, c in ipairs(pGui:GetChildren()) do
+                    if c.Name == "joinRequestConfirm" then
+                        instantAcceptAndDestroyPopup(c)
+                    end
                 end
             end)
         end
-        task.wait(0.12)
+    end)
+end
+
+task.spawn(function()
+    while _G.MAKI_BOSS_RAID_RUNNING do
+        task.wait(0.08)
+        if isCarry and isRaidOrDungeon() and Config.AutoAcceptJoins then
+            for _, c in ipairs(pGui:GetChildren()) do
+                if c.Name == "joinRequestConfirm" then
+                    instantAcceptAndDestroyPopup(c)
+                end
+            end
+            if respondJoinRequestRemote then
+                for _, altName in ipairs(Config.AltUsernames) do
+                    if not Players:FindFirstChild(altName) then
+                        pcall(function()
+                            respondJoinRequestRemote:FireServer(altName, true)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while _G.MAKI_BOSS_RAID_RUNNING do
+        if not isCarry and isMainLobby() then
+            pcall(function()
+                if sendJoinRequestRemote then
+                    if Config.CarryUsername and #Config.CarryUsername > 0 then sendJoinRequestRemote:InvokeServer(Config.CarryUsername) end
+                end
+                if joinDungeonRemote then
+                    if Config.CarryUsername and #Config.CarryUsername > 0 then joinDungeonRemote:InvokeServer(Config.CarryUsername) end
+                end
+            end)
+        end
+        task.wait(0.5)
     end
 end)
 
