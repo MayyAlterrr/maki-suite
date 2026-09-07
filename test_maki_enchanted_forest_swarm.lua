@@ -255,35 +255,31 @@ local function universalButtonClick(btn)
 end
 
 local function getMatchProgress()
-    local dProg = Workspace:FindFirstChild("dungeonProgress")
-    if dProg and dProg:IsA("StringValue") then
-        local v = dProg.Value:lower()
-        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("dungeoncomplete") or v:find("defeat") or v:find("failed") or v:find("loss") or v:find("won") or v:find("win") or v:find("cleared") or v:find("rewards") or v:find("finished") then
-            return v
+    -- 1. Check Dungeon Quest Native ReplayDungeonButton on mainInterface (100% Accurate)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        local mainInt = pg:FindFirstChild("mainInterface")
+        local replayBtn = mainInt and mainInt:FindFirstChild("buttons") and mainInt.buttons:FindFirstChild("optionsButton") and mainInt.buttons.optionsButton:FindFirstChild("ReplayDungeonButton")
+        if replayBtn and replayBtn.Visible then
+            return "victory"
         end
-    end
 
-    local dungeon = Workspace:FindFirstChild("dungeon")
-    if dungeon then
-        for _, valName in ipairs({"dungeonFinished", "finished", "isFinished", "isComplete", "complete"}) do
-            local val = dungeon:FindFirstChild(valName)
-            if val and val:IsA("BoolValue") and val.Value == true then
+        -- Check rewardGuiHolder (pops up when match finishes and rewards drop)
+        local rHolder = pg:FindFirstChild("rewardGuiHolder")
+        if rHolder and #rHolder:GetChildren() > 0 then
+            return "victory"
+        end
+
+        -- Check Menu Replay Frame
+        local menuGui = pg:FindFirstChild("Menu") or pg:FindFirstChild("BossRaidReplayMenu")
+        if menuGui and ((menuGui:IsA("ScreenGui") and menuGui.Enabled) or (menuGui:IsA("GuiObject") and menuGui.Visible)) then
+            local rBtn = menuGui:FindFirstChild("replayButton", true) or menuGui:FindFirstChild("ReplayButton", true) or menuGui:FindFirstChild("retryButton", true)
+            if rBtn and rBtn.Visible then
                 return "victory"
             end
         end
-        local bossRoom = dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room") or dungeon:FindFirstChild("Room7") or dungeon:FindFirstChild("Room8")
-        if bossRoom then
-            for _, valName in ipairs({"dungeonFinished", "finished", "isFinished"}) do
-                local val = bossRoom:FindFirstChild(valName)
-                if val and val:IsA("BoolValue") and val.Value == true then
-                    return "victory"
-                end
-            end
-        end
-    end
 
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if pg then
+        -- Check EndGame / Victory / Defeat Screen list
         for _, gName in ipairs({"EndGameGui", "endGameGui", "defeatGui", "victoryGui", "matchEndGui", "rewardsGui", "resultGui", "gameFinishedGui", "dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "ReplayDungeonButton"}) do
             local g = pg:FindFirstChild(gName)
             if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
@@ -303,11 +299,40 @@ local function getMatchProgress()
         end
     end
 
+    -- 2. Check dungeonProgress StringValue
+    local dProg = Workspace:FindFirstChild("dungeonProgress")
+    if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
+        local v = dProg.Value:lower()
+        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("dungeoncomplete") or v:find("defeat") or v:find("failed") or v:find("loss") or v:find("won") or v:find("win") or v:find("cleared") or v:find("rewards") or v:find("finished") then
+            return v
+        end
+    end
+
+    -- 3. Check Workspace dungeon bool values
+    local dungeon = Workspace:FindFirstChild("dungeon")
+    if dungeon then
+        for _, valName in ipairs({"dungeonFinished", "finished", "isFinished", "isComplete", "complete"}) do
+            local val = dungeon:FindFirstChild(valName)
+            if val and val:IsA("BoolValue") and val.Value == true then
+                return "victory"
+            end
+        end
+        local bossRoom = dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room") or dungeon:FindFirstChild("Room7") or dungeon:FindFirstChild("Room8")
+        if bossRoom then
+            for _, valName in ipairs({"dungeonFinished", "finished", "isFinished"}) do
+                local val = bossRoom:FindFirstChild(valName)
+                if val and val:IsA("BoolValue") and val.Value == true then
+                    return "victory"
+                end
+            end
+        end
+    end
+
     return "active"
 end
 
 -- ========================================================================
---  [MODULE 5.8] INFINITE AUTO-RETRY / REPLAY ENGINE (MOBILE & DESKTOP)
+--  [MODULE 5.8] INFINITE AUTO-RETRY / REPLAY ENGINE (PC & MOBILE)
 -- ========================================================================
 local isProcessingReplay = false
 local function handleDungeonReplay(prog)
@@ -336,15 +361,22 @@ local function handleDungeonReplay(prog)
                     pcall(function() replayRemote:FireServer(Config.HardcoreMode or false) end)
                     pcall(function() replayRemote:FireServer({ isHardcore = Config.HardcoreMode or false, hardcore = Config.HardcoreMode or false }) end)
                 end
+                if startDungeonRemote then pcall(function() startDungeonRemote:FireServer() end) end
             end
             if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
             if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
 
-            -- 2. Click any visible Replay / Retry / Ready Buttons on Screen (Mobile + Desktop)
+            -- 2. Direct Click on Dungeon Quest ReplayDungeonButton (PC + Mobile)
             local pg = LocalPlayer:FindFirstChild("PlayerGui")
             if pg then
+                local mainInt = pg:FindFirstChild("mainInterface")
+                local replayBtn = mainInt and mainInt:FindFirstChild("buttons") and mainInt.buttons:FindFirstChild("optionsButton") and mainInt.buttons.optionsButton:FindFirstChild("ReplayDungeonButton")
+                if replayBtn and replayBtn.Visible then
+                    universalButtonClick(replayBtn)
+                end
+
                 for _, btn in ipairs(pg:GetDescendants()) do
-                    if btn:IsA("GuiButton") then
+                    if btn:IsA("GuiButton") and btn.Visible then
                         local bName = btn.Name:lower()
                         local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
                         if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready") or bName:find("playagain") or bName:find("again")
@@ -1925,6 +1957,19 @@ task.spawn(function()
             else
                 statusLbl.Text = "● STATUS: ⚔️ LOBBY ALT (Requesting Entry)"
                 statusLbl.TextColor3 = Color3.fromRGB(120, 200, 255)
+            end
+        end
+    end
+end)
+
+-- Active Dungeon Finish Watchdog (Runs independently of character physics)
+task.spawn(function()
+    while _G.MAKI_EF_SWARM_RUNNING do
+        task.wait(0.5)
+        if isDungeon() and not isProcessingReplay then
+            local prog = getMatchProgress()
+            if prog ~= "active" then
+                handleDungeonReplay(prog)
             end
         end
     end
