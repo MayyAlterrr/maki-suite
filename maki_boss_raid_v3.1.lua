@@ -209,6 +209,29 @@ local function updateCarryRole()
 end
 updateCarryRole()
 
+local function areAllAltsPresent()
+    if not Config.AltUsernames or #Config.AltUsernames == 0 then return true end
+    local validAlts = {}
+    for _, name in ipairs(Config.AltUsernames) do
+        if type(name) == "string" and #name > 0 then
+            table.insert(validAlts, name)
+        end
+    end
+    if #validAlts == 0 then return true end
+
+    for _, altName in ipairs(validAlts) do
+        local p = Players:FindFirstChild(altName)
+        if not p then return false end
+        local char = p.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not char or not hrp or not hum then
+            return false
+        end
+    end
+    return true
+end
+
 -- ========================================================================
 --  MODULE 6: ULTRA-POTATO GRAPHICS & CPU SAVER ENGINE
 -- ========================================================================
@@ -512,15 +535,20 @@ local function executeInstantReadyUp()
 
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
-        local rGui = pG:FindFirstChild("readyButton") or pG:FindFirstChild("readyGui")
-        if rGui then
-            for _, desc in ipairs(rGui:GetDescendants()) do
-                if desc:IsA("GuiButton") then
-                    pcall(function()
-                        for _, c in ipairs(getconnections(desc.Activated)) do c:Fire() end
-                        for _, c in ipairs(getconnections(desc.MouseButton1Click)) do c:Fire() end
-                        for _, c in ipairs(getconnections(desc.MouseButton1Down)) do c:Fire() end
-                    end)
+        for _, gui in ipairs(pG:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled then
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if desc:IsA("GuiButton") then
+                        local text = (desc:IsA("TextButton") and desc.Text or ""):lower()
+                        local name = desc.Name:lower()
+                        if text:find("ready") or name:find("ready") then
+                            pcall(function()
+                                for _, c in ipairs(getconnections(desc.Activated)) do c:Fire() end
+                                for _, c in ipairs(getconnections(desc.MouseButton1Click)) do c:Fire() end
+                                for _, c in ipairs(getconnections(desc.MouseButton1Down)) do c:Fire() end
+                            end)
+                        end
+                    end
                 end
             end
         end
@@ -535,10 +563,10 @@ end
 
 task.spawn(function()
     while _G.MAKI_BOSS_RAID_RUNNING do
-        task.wait(0.2)
+        task.wait(0.15)
         if isRaidOrDungeon() then
             local prog = getMatchProgress()
-            if prog == "playersnotready" or prog:find("ready") then
+            if prog == "playersnotready" or prog:find("ready") or (isCarry and areAllAltsPresent()) then
                 executeInstantReadyUp()
             end
         end
@@ -553,31 +581,43 @@ local function findBossTarget()
         Workspace:FindFirstChild("enemies"),
         Workspace:FindFirstChild("boss"),
         Workspace:FindFirstChild("dungeon"),
+        Workspace:FindFirstChild("Arena"),
         Workspace
     }
 
+    local function checkModel(obj)
+        if not obj or not obj:IsA("Model") or obj == LocalPlayer.Character then return nil end
+        local hum = obj:FindFirstChildOfClass("Humanoid")
+        local hrp = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChild("Torso")
+        if hum and hrp and hum.Health > 0 then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character == obj or p.Name == obj.Name then
+                    return nil
+                end
+            end
+            return obj, hrp, hum
+        end
+        return nil
+    end
+
     for _, container in ipairs(containers) do
         if container then
-            for _, obj in ipairs(container:GetDescendants()) do
-                if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-                    local hum = obj:FindFirstChildOfClass("Humanoid")
-                    local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChild("Torso") or obj.PrimaryPart
-                    if hum and hrp and hum.Health > 0 then
-                        local isPlayer = false
-                        for _, p in ipairs(Players:GetPlayers()) do
-                            if p.Character == obj or p.Name == obj.Name then
-                                isPlayer = true
-                                break
-                            end
-                        end
-                        if not isPlayer then
-                            return obj, hrp, hum
-                        end
-                    end
-                end
+            for _, child in ipairs(container:GetChildren()) do
+                local m, r, h = checkModel(child)
+                if m and r and h then return m, r, h end
             end
         end
     end
+
+    for _, container in ipairs(containers) do
+        if container then
+            for _, desc in ipairs(container:GetDescendants()) do
+                local m, r, h = checkModel(desc)
+                if m and r and h then return m, r, h end
+            end
+        end
+    end
+
     return nil, nil, nil
 end
 
@@ -607,35 +647,31 @@ task.spawn(function()
     while _G.MAKI_BOSS_RAID_RUNNING do
         task.wait(0.03)
         if isCarry and isRaidOrDungeon() then
-            local prog = getMatchProgress()
-            local altsIn = areAllAltsPresent()
-            if altsIn and prog ~= "bosskilled" and prog ~= "victory" and prog ~= "complete" and prog ~= "playersnotready" then
-                local myChar = LocalPlayer.Character
-                local myHrp  = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            local myChar = LocalPlayer.Character
+            local myHrp  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
 
-                if myHrp and myHum and myHum.Health > 0 then
-                    local bossModel, bossHrp, bossHum = findBossTarget()
-                    if bossHrp and bossHum and bossHum.Health > 0 then
-                        local myPos = myHrp.Position
-                        local bossPos = bossHrp.Position
-                        local toBoss = (bossPos - myPos)
-                        local dist = toBoss.Magnitude
+            if myHrp and myHum and myHum.Health > 0 then
+                local bossModel, bossHrp, bossHum = findBossTarget()
+                if bossHrp and bossHum and bossHum.Health > 0 then
+                    local myPos = myHrp.Position
+                    local bossPos = bossHrp.Position
+                    local toBoss = (bossPos - myPos)
+                    local dist = toBoss.Magnitude
 
-                        -- Continuously look at boss
-                        local flatLook = Vector3.new(toBoss.X, 0, toBoss.Z)
-                        if flatLook.Magnitude > 0.1 then
-                            myHrp.CFrame = CFrame.lookAt(myPos, myPos + flatLook.Unit)
-                        end
+                    -- Continuously face the boss
+                    local flatLook = Vector3.new(toBoss.X, 0, toBoss.Z)
+                    if flatLook.Magnitude > 0.1 then
+                        myHrp.CFrame = CFrame.lookAt(myPos, Vector3.new(bossPos.X, myPos.Y, bossPos.Z))
+                    end
 
-                        -- Continuously drive character forward towards boss
-                        if dist > 4.0 then
-                            local walkDir = flatLook.Unit
-                            myHum:Move(walkDir, false)
-                            myHum:MoveTo(bossPos)
-                        else
-                            myHum:Move(Vector3.zero, false)
-                        end
+                    -- Continuously drive character forward towards boss
+                    if dist > 3.5 then
+                        local walkDir = flatLook.Unit
+                        myHum:Move(walkDir, false)
+                        myHum:MoveTo(bossPos)
+                    else
+                        myHum:Move(Vector3.zero, false)
                     end
                 end
             end
@@ -998,23 +1034,6 @@ local function carryCreateAndLaunchBossRaid()
         task.wait(2.0)
         isCreatingBossLobby = false
     end
-end
-
-local function areAllAltsPresent()
-    if not Config.AltUsernames or #Config.AltUsernames == 0 then return true end
-    for _, altName in ipairs(Config.AltUsernames) do
-        local p = Players:FindFirstChild(altName)
-        if not p then
-            return false
-        end
-        local char = p.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not char or not hrp or not hum then
-            return false
-        end
-    end
-    return true
 end
 
 local function triggerCarryStartBossRaid()
