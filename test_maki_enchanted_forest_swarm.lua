@@ -254,75 +254,50 @@ local function universalButtonClick(btn)
     end)
 end
 
-local function getMatchProgress()
-    -- 1. Check Dungeon Quest Native ReplayDungeonButton on mainInterface (100% Accurate)
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if pg then
-        local mainInt = pg:FindFirstChild("mainInterface")
-        local replayBtn = mainInt and mainInt:FindFirstChild("buttons") and mainInt.buttons:FindFirstChild("optionsButton") and mainInt.buttons.optionsButton:FindFirstChild("ReplayDungeonButton")
-        if replayBtn and replayBtn.Visible then
-            return "victory"
-        end
+local function getMatchProgress(currentWp)
+    if isMainLobby() then return "active" end
 
-        -- Check rewardGuiHolder (pops up when match finishes and rewards drop)
-        local rHolder = pg:FindFirstChild("rewardGuiHolder")
-        if rHolder and #rHolder:GetChildren() > 0 then
-            return "victory"
-        end
-
-        -- Check Menu Replay Frame
-        local menuGui = pg:FindFirstChild("Menu") or pg:FindFirstChild("BossRaidReplayMenu")
-        if menuGui and ((menuGui:IsA("ScreenGui") and menuGui.Enabled) or (menuGui:IsA("GuiObject") and menuGui.Visible)) then
-            local rBtn = menuGui:FindFirstChild("replayButton", true) or menuGui:FindFirstChild("ReplayButton", true) or menuGui:FindFirstChild("retryButton", true)
-            if rBtn and rBtn.Visible then
-                return "victory"
-            end
-        end
-
-        -- Check EndGame / Victory / Defeat Screen list
-        for _, gName in ipairs({"EndGameGui", "endGameGui", "defeatGui", "victoryGui", "matchEndGui", "rewardsGui", "resultGui", "gameFinishedGui", "dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "ReplayDungeonButton"}) do
-            local g = pg:FindFirstChild(gName)
-            if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
-                local txt = ""
-                for _, d in ipairs(g:GetDescendants()) do
-                    if d:IsA("TextLabel") and d.Visible and d.Text then
-                        txt = txt .. " " .. d.Text:lower()
-                    end
-                end
-                if txt:find("defeat") or txt:find("failed") or txt:find("time up") or txt:find("out of time") or txt:find("game over") then
-                    return "defeat"
-                elseif txt:find("victory") or txt:find("completed") or txt:find("clear") or txt:find("rewards") or txt:find("won") or txt:find("finished") then
-                    return "victory"
-                end
-                return "victory"
-            end
-        end
-    end
-
-    -- 2. Check dungeonProgress StringValue
+    -- 1. Check dungeonProgress StringValue
     local dProg = Workspace:FindFirstChild("dungeonProgress")
     if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
         local v = dProg.Value:lower()
-        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("dungeoncomplete") or v:find("defeat") or v:find("failed") or v:find("loss") or v:find("won") or v:find("win") or v:find("cleared") or v:find("rewards") or v:find("finished") then
+        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("dungeoncomplete") or v:find("defeat") or v:find("failed") or v:find("loss") or v:find("won") or v:find("win") or v:find("cleared") or v:find("finished") then
             return v
         end
     end
 
-    -- 3. Check Workspace dungeon bool values
+    -- 2. Check dungeon bossRoom Finished BoolValue
     local dungeon = Workspace:FindFirstChild("dungeon")
-    if dungeon then
-        for _, valName in ipairs({"dungeonFinished", "finished", "isFinished", "isComplete", "complete"}) do
-            local val = dungeon:FindFirstChild(valName)
-            if val and val:IsA("BoolValue") and val.Value == true then
+    local bossRoom = dungeon and (dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room") or dungeon:FindFirstChild("Room7"))
+    local bFinished = bossRoom and (bossRoom:FindFirstChild("dungeonFinished") or bossRoom:FindFirstChild("finished") or bossRoom:FindFirstChild("isFinished"))
+    if bFinished and bFinished:IsA("BoolValue") and bFinished.Value == true then
+        return "victory"
+    end
+
+    -- 3. Check End Game Result GUIs (ONLY valid when party has reached deep into dungeon: WP >= 800)
+    if currentWp and currentWp >= 800 then
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            local mainInt = pg:FindFirstChild("mainInterface")
+            local replayBtn = mainInt and mainInt:FindFirstChild("buttons") and mainInt.buttons:FindFirstChild("optionsButton") and mainInt.buttons.optionsButton:FindFirstChild("ReplayDungeonButton")
+            if replayBtn and replayBtn.Visible then
                 return "victory"
             end
-        end
-        local bossRoom = dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room") or dungeon:FindFirstChild("Room7") or dungeon:FindFirstChild("Room8")
-        if bossRoom then
-            for _, valName in ipairs({"dungeonFinished", "finished", "isFinished"}) do
-                local val = bossRoom:FindFirstChild(valName)
-                if val and val:IsA("BoolValue") and val.Value == true then
-                    return "victory"
+
+            for _, gName in ipairs({"dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "EndGameGui", "defeatGui", "victoryGui"}) do
+                local g = pg:FindFirstChild(gName)
+                if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
+                    local txt = ""
+                    for _, d in ipairs(g:GetDescendants()) do
+                        if d:IsA("TextLabel") and d.Visible and d.Text then
+                            txt = txt .. " " .. d.Text:lower()
+                        end
+                    end
+                    if txt:find("defeat") or txt:find("failed") or txt:find("time up") or txt:find("out of time") or txt:find("game over") then
+                        return "defeat"
+                    else
+                        return "victory"
+                    end
                 end
             end
         end
@@ -331,9 +306,6 @@ local function getMatchProgress()
     return "active"
 end
 
--- ========================================================================
---  [MODULE 5.8] INFINITE AUTO-RETRY / REPLAY ENGINE (PC & MOBILE)
--- ========================================================================
 local isProcessingReplay = false
 local function handleDungeonReplay(prog)
     if isProcessingReplay then return end
@@ -1967,18 +1939,7 @@ task.spawn(function()
     end
 end)
 
--- Active Dungeon Finish Watchdog (Runs independently of character physics)
-task.spawn(function()
-    while _G.MAKI_EF_SWARM_RUNNING do
-        task.wait(0.5)
-        if isDungeon() and not isProcessingReplay then
-            local prog = getMatchProgress()
-            if prog ~= "active" then
-                handleDungeonReplay(prog)
-            end
-        end
-    end
-end)
+
 
 -- ========================================================================
 --  [MODULE 6] ACTIVE HIGHWAY SWARM ENGINE (BOTH MAIN & ALTS)
@@ -2044,15 +2005,15 @@ task.spawn(function()
             local myPos = hrp.Position
             local now = os.clock()
 
-            -- Victory / Defeat / Replay Check & Arena Dragon Death Milestone
-            local prog = getMatchProgress()
+            -- Victory / Defeat / Replay Check (Gated so spawn is NEVER false-flagged)
+            local prog = getMatchProgress(currentWpIndex)
             local activeBossModel = findBossOrTree(currentWpIndex, myPos)
             local livingEnemiesList, _ = scanLivingEnemies(currentWpIndex)
             local isDragonDeadInArena = (currentWpIndex >= 970 or myPos.X <= -1150.0) and (not activeBossModel) and (#livingEnemiesList == 0)
 
-            if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog == "defeat" or prog == "failed" or isDragonDeadInArena then
+            if (prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog == "defeat" or prog == "failed" or isDragonDeadInArena) and (currentWpIndex >= 800 or prog == "defeat" or prog == "failed") then
                 handleDungeonReplay(prog == "active" and "victory" or prog)
-                task.wait(0.5)
+                task.wait(1.0)
                 currentWpIndex = 1
                 treeKilled = false
                 golemKilled = false
