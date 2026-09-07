@@ -540,24 +540,26 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  DIRECT BOSS HOMING & ELIMINATION ENGINE
+--  DIRECT BOSS HOMING & 35-STUD SAFE PERIMETER (FROM PROGRESSION MASTER)
 -- ========================================================================
 local function findBossTarget()
-    local dungeon = Workspace:FindFirstChild("dungeon") or Workspace
-    for _, obj in ipairs(dungeon:GetDescendants()) do
-        if obj:IsA("Model") then
-            local hum = obj:FindFirstChildOfClass("Humanoid")
-            local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChild("Torso")
-            if hum and hrp and hum.Health > 0 then
+    local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon") or Workspace
+    if enemiesFolder then
+        for _, c in ipairs(enemiesFolder:GetDescendants()) do
+            if c:IsA("Model") and c ~= LocalPlayer.Character then
                 local isPlayer = false
                 for _, p in ipairs(Players:GetPlayers()) do
-                    if p.Character == obj or p.Name == obj.Name then
+                    if p.Character == c or p.Name == c.Name then
                         isPlayer = true
                         break
                     end
                 end
                 if not isPlayer then
-                    return obj, hrp, hum
+                    local bHum = c:FindFirstChildOfClass("Humanoid")
+                    local bRoot = c.PrimaryPart or c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Head") or c:FindFirstChild("Torso")
+                    if bHum and bHum.Health > 0 and bRoot then
+                        return c, bRoot, bHum
+                    end
                 end
             end
         end
@@ -571,14 +573,17 @@ task.spawn(function()
         if isCarry and isRaidOrDungeon() then
             local prog = getMatchProgress()
             if prog ~= "bosskilled" and prog ~= "victory" and prog ~= "complete" and prog ~= "playersnotready" then
-                local myChar = LocalPlayer.Character
-                local myHrp  = myChar and myChar:FindFirstChild("HumanoidRootPart")
-                local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                local char = LocalPlayer.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-                if myHrp and myHum and myHum.Health > 0 then
-                    local bossModel, bossHrp, bossHum = findBossTarget()
-                    if bossHrp and bossHum and bossHum.Health > 0 then
-                        myHum:MoveTo(bossHrp.Position)
+                if hrp and hum and hum.Health > 0 then
+                    local bossModel, bRoot, bHum = findBossTarget()
+                    if bRoot and bHum and bHum.Health > 0 then
+                        local dir = (bRoot.Position - hrp.Position).Unit
+                        local standPos = bRoot.Position - (dir * 35.0)
+                        hum:MoveTo(standPos)
+                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
                     end
                 end
             end
@@ -684,13 +689,7 @@ task.spawn(function()
     end
 end)
 
-RunService.Heartbeat:Connect(function()
-    if isCarry and isRaidOrDungeon() then
-        local char = LocalPlayer.Character
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.WalkSpeed < 40 then hum.WalkSpeed = 40 end
-    end
-end)
+-- Pure vanilla WalkSpeed: Pulse Wave ability provides natural movement buff
 
 -- ========================================================================
 --  MODULE 3: REFINED AUTO-SELL & PURPLE COLLECT PROTECTION ENGINE
