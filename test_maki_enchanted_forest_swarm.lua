@@ -325,7 +325,7 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  [MODULE 1] 55 FPS SWARM SYNCHRONIZER & ULTRA POTATO GRAPHICS
+--  [MODULE 1] 55 FPS SWARM SYNCHRONIZER & WHITE SCREEN CPU SAVER ENGINE
 -- ========================================================================
 local function applyFpsCap(fps)
     local targetFps = fps or Config.SwarmFpsCap or 55
@@ -376,12 +376,96 @@ local function applyUltraPotatoGraphics()
     end)
 end
 
-if Config.UltraPotatoGraphics then
-    task.spawn(function()
-        task.wait(2.0)
-        applyUltraPotatoGraphics()
-    end)
+local whiteScreenGui = nil
+
+local function setupAltWhiteScreen()
+    if isMain then
+        pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        if whiteScreenGui then
+            pcall(function() whiteScreenGui:Destroy() end)
+            whiteScreenGui = nil
+        end
+        return
+    end
+
+    -- 1. Disable 3D World Rendering (Cuts GPU/CPU to near zero on Mobile/Cloud Phones)
+    pcall(function() RunService:Set3dRenderingEnabled(false) end)
+    pcall(function() SoundService:SetVolume(0) end)
+    applyUltraPotatoGraphics()
+
+    -- 2. Create Fullscreen Pure White Screen Overlay
+    local targetParent = getGuiParent()
+    local existing = targetParent:FindFirstChild("Maki_Alt_WhiteScreen")
+    if existing then pcall(function() existing:Destroy() end) end
+
+    whiteScreenGui = Instance.new("ScreenGui")
+    whiteScreenGui.Name = "Maki_Alt_WhiteScreen"
+    whiteScreenGui.DisplayOrder = 999999
+    whiteScreenGui.IgnoreGuiInset = true
+    whiteScreenGui.ResetOnSpawn = false
+    pcall(function() whiteScreenGui.Parent = targetParent end)
+    if not whiteScreenGui.Parent then
+        whiteScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    local bg = Instance.new("Frame", whiteScreenGui)
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.Position = UDim2.new(0, 0, 0, 0)
+    bg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    bg.BorderSizePixel = 0
+    bg.Active = true
+
+    local card = Instance.new("Frame", bg)
+    card.Size = UDim2.new(0, 260, 0, 100)
+    card.Position = UDim2.new(0.5, -130, 0.5, -50)
+    card.BackgroundColor3 = Color3.fromRGB(245, 247, 250)
+    card.BorderSizePixel = 0
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+    local stroke = Instance.new("UIStroke", card)
+    stroke.Color = Color3.fromRGB(210, 220, 235)
+    stroke.Thickness = 1.5
+
+    local titleLbl = Instance.new("TextLabel", card)
+    titleLbl.Size = UDim2.new(1, 0, 0, 24)
+    titleLbl.Position = UDim2.new(0, 0, 0, 10)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text = "🌲 MAKI EF SWARM (ALT)"
+    titleLbl.TextColor3 = Color3.fromRGB(30, 140, 60)
+    titleLbl.TextSize = 12
+    titleLbl.Font = Enum.Font.GothamBold
+
+    local userLbl = Instance.new("TextLabel", card)
+    userLbl.Size = UDim2.new(1, 0, 0, 18)
+    userLbl.Position = UDim2.new(0, 0, 0, 36)
+    userLbl.BackgroundTransparency = 1
+    userLbl.Text = "👤 " .. tostring(LocalPlayer.Name)
+    userLbl.TextColor3 = Color3.fromRGB(80, 90, 110)
+    userLbl.TextSize = 10
+    userLbl.Font = Enum.Font.GothamSemibold
+
+    local statusLbl = Instance.new("TextLabel", card)
+    statusLbl.Size = UDim2.new(1, 0, 0, 22)
+    statusLbl.Position = UDim2.new(0, 0, 0, 62)
+    statusLbl.BackgroundTransparency = 1
+    statusLbl.Text = "⚡ White Screen CPU Saver Active"
+    statusLbl.TextColor3 = Color3.fromRGB(120, 130, 150)
+    statusLbl.TextSize = 8.5
+    statusLbl.Font = Enum.Font.Gotham
 end
+
+task.spawn(function()
+    task.wait(1.0)
+    setupAltWhiteScreen()
+end)
+
+task.spawn(function()
+    while _G.MAKI_EF_SWARM_RUNNING do
+        task.wait(5.0)
+        if not isMain and not whiteScreenGui then
+            setupAltWhiteScreen()
+        end
+    end
+end)
 
 -- ========================================================================
 --  [MODULE 2] DISCORD WEBHOOK DROP NOTIFIER
