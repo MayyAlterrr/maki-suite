@@ -13,6 +13,7 @@
 --    • Main Leaver Watchdog: If Main leaves, all Alts return to lobby
 --    • Hardcore Mode Toggle: Configurable in GUI (Default: OFF)
 --    • 100% Protected Auto-Sell: 11 Purple Collectibles + Legendaries/Mythics safe
+--    • Alt White Screen CPU Saver: Complete 3D render off + white overlay for Alts
 -- ========================================================================
 
 local Players = game:GetService("Players")
@@ -219,162 +220,15 @@ local function isDungeon()
     return not isMainLobby()
 end
 
--- ========================================================================
---  UNIVERSAL MOBILE (DELTA/ANDROID) & DESKTOP GUI BUTTON CLICKER
--- ========================================================================
-local function universalButtonClick(btn)
-    if not btn then return end
-
-    -- 1. firesignal (Mobile executors: Delta, Fluxus, Codex, Hydrogen)
-    if typeof(firesignal) == "function" then
-        pcall(function() firesignal(btn.Activated) end)
-        pcall(function() firesignal(btn.MouseButton1Click) end)
-        pcall(function() firesignal(btn.MouseButton1Down) end)
-        pcall(function() firesignal(btn.MouseButton1Up) end)
-    end
-
-    -- 2. getconnections (Desktop & standard executor environments)
-    if typeof(getconnections) == "function" then
-        pcall(function()
-            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
-        end)
-    end
-
-    -- 3. VirtualInputManager Screen Tap (Hardware simulation on mobile / cloud phones)
-    pcall(function()
-        if VirtualInputManager and btn.AbsolutePosition and btn.AbsoluteSize then
-            local x = btn.AbsolutePosition.X + (btn.AbsoluteSize.X / 2)
-            local y = btn.AbsolutePosition.Y + (btn.AbsoluteSize.Y / 2) + 36
-            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
-            task.wait(0.02)
-            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
-        end
-    end)
-end
-
-local function getMatchProgress(currentWp)
-    if isMainLobby() then return "active" end
-
-    -- 1. Check dungeonProgress StringValue
+local function getMatchProgress()
     local dProg = Workspace:FindFirstChild("dungeonProgress")
     if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
         local v = dProg.Value:lower()
-        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("dungeoncomplete") or v:find("defeat") or v:find("failed") or v:find("loss") or v:find("won") or v:find("win") or v:find("cleared") or v:find("finished") then
+        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("defeat") or v:find("failed") or v:find("loss") then
             return v
         end
     end
-
-    -- 2. Check dungeon bossRoom Finished BoolValue
-    local dungeon = Workspace:FindFirstChild("dungeon")
-    local bossRoom = dungeon and (dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room") or dungeon:FindFirstChild("Room7"))
-    local bFinished = bossRoom and (bossRoom:FindFirstChild("dungeonFinished") or bossRoom:FindFirstChild("finished") or bossRoom:FindFirstChild("isFinished"))
-    if bFinished and bFinished:IsA("BoolValue") and bFinished.Value == true then
-        return "victory"
-    end
-
-    -- 3. Check End Game Result GUIs (ONLY valid when party has reached deep into dungeon: WP >= 800)
-    if currentWp and currentWp >= 800 then
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        if pg then
-            local mainInt = pg:FindFirstChild("mainInterface")
-            local replayBtn = mainInt and mainInt:FindFirstChild("buttons") and mainInt.buttons:FindFirstChild("optionsButton") and mainInt.buttons.optionsButton:FindFirstChild("ReplayDungeonButton")
-            if replayBtn and replayBtn.Visible then
-                return "victory"
-            end
-
-            for _, gName in ipairs({"dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "EndGameGui", "defeatGui", "victoryGui"}) do
-                local g = pg:FindFirstChild(gName)
-                if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
-                    local txt = ""
-                    for _, d in ipairs(g:GetDescendants()) do
-                        if d:IsA("TextLabel") and d.Visible and d.Text then
-                            txt = txt .. " " .. d.Text:lower()
-                        end
-                    end
-                    if txt:find("defeat") or txt:find("failed") or txt:find("time up") or txt:find("out of time") or txt:find("game over") then
-                        return "defeat"
-                    else
-                        return "victory"
-                    end
-                end
-            end
-        end
-    end
-
     return "active"
-end
-
-local isProcessingReplay = false
-local function handleDungeonReplay(prog)
-    if isProcessingReplay then return end
-    isProcessingReplay = true
-
-    task.spawn(function()
-        local isDefeat = (prog == "defeat" or prog == "failed" or prog == "loss")
-        if isDefeat then
-            statusLbl.Text = "● STATUS: ⚠️ DEFEAT / TIMEOUT! Auto-Retrying..."
-            statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
-            infoLbl.Text = "🔄 Auto-Triggering Match Replay..."
-        else
-            statusLbl.Text = "● STATUS: 🏆 VICTORY! Collecting Drops & Replaying..."
-            statusLbl.TextColor3 = Color3.fromRGB(100, 255, 120)
-            infoLbl.Text = "⚡ Replaying Enchanted Forest..."
-            executeSafeAutoSell()
-        end
-
-        local startTime = os.clock()
-        while _G.MAKI_EF_SWARM_RUNNING and isDungeon() and (os.clock() - startTime < 12.0) do
-            -- 1. Fire Replay / Ready Remotes on Main & Alts
-            if isMain then
-                if replayRemote then
-                    pcall(function() replayRemote:FireServer() end)
-                    pcall(function() replayRemote:FireServer(Config.HardcoreMode or false) end)
-                    pcall(function() replayRemote:FireServer({ isHardcore = Config.HardcoreMode or false, hardcore = Config.HardcoreMode or false }) end)
-                end
-                if startDungeonRemote then pcall(function() startDungeonRemote:FireServer() end) end
-            end
-            if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
-            if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
-
-            -- 2. Direct Click on Dungeon Quest ReplayDungeonButton (PC + Mobile)
-            local pg = LocalPlayer:FindFirstChild("PlayerGui")
-            if pg then
-                local mainInt = pg:FindFirstChild("mainInterface")
-                local replayBtn = mainInt and mainInt:FindFirstChild("buttons") and mainInt.buttons:FindFirstChild("optionsButton") and mainInt.buttons.optionsButton:FindFirstChild("ReplayDungeonButton")
-                if replayBtn and replayBtn.Visible then
-                    universalButtonClick(replayBtn)
-                end
-
-                for _, btn in ipairs(pg:GetDescendants()) do
-                    if btn:IsA("GuiButton") and btn.Visible then
-                        local bName = btn.Name:lower()
-                        local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
-                        if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready") or bName:find("playagain") or bName:find("again")
-                            or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") or bText:find("play again") or bText:find("again") then
-                            universalButtonClick(btn)
-                        end
-                    end
-                end
-            end
-
-            task.wait(0.35)
-        end
-
-        -- 3. 12-Second Failsafe: Return to Lobby if match failed to reload in-place
-        if isDungeon() and _G.MAKI_EF_SWARM_RUNNING then
-            local pNow = getMatchProgress()
-            if pNow ~= "active" then
-                print("[Maki Replay] 🔄 Replay timed out after 12s, returning to Main Lobby to re-host...")
-                if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
-                task.wait(0.5)
-                pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
-            end
-        end
-
-        isProcessingReplay = false
-    end)
 end
 
 local stuckLoadingSeconds = 0
@@ -500,6 +354,16 @@ local function applyUltraPotatoGraphics()
     end)
 end
 
+if Config.UltraPotatoGraphics then
+    task.spawn(function()
+        task.wait(2.0)
+        applyUltraPotatoGraphics()
+    end)
+end
+
+-- ========================================================================
+--  [MODULE 1.5] ALT WHITE SCREEN CPU SAVER & 3D RENDERING FREEZE
+-- ========================================================================
 local whiteScreenGui = nil
 
 local function setupAltWhiteScreen()
@@ -512,10 +376,8 @@ local function setupAltWhiteScreen()
         return
     end
 
-    -- 1. Disable 3D World Rendering (Cuts GPU/CPU to near zero on Mobile/Cloud Phones)
+    -- 1. Turn OFF 3D Viewport Rendering for Alts
     pcall(function() RunService:Set3dRenderingEnabled(false) end)
-    pcall(function() SoundService:SetVolume(0) end)
-    applyUltraPotatoGraphics()
 
     -- 2. Create Fullscreen Pure White Screen Overlay
     local targetParent = getGuiParent()
@@ -540,55 +402,39 @@ local function setupAltWhiteScreen()
     bg.Active = true
 
     local card = Instance.new("Frame", bg)
-    card.Size = UDim2.new(0, 260, 0, 100)
-    card.Position = UDim2.new(0.5, -130, 0.5, -50)
-    card.BackgroundColor3 = Color3.fromRGB(245, 247, 250)
+    card.Size = UDim2.new(0, 240, 0, 85)
+    card.Position = UDim2.new(0.5, -120, 0.5, -42)
+    card.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
     card.BorderSizePixel = 0
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
     local stroke = Instance.new("UIStroke", card)
-    stroke.Color = Color3.fromRGB(210, 220, 235)
+    stroke.Color = Color3.fromRGB(200, 200, 210)
     stroke.Thickness = 1.5
 
     local titleLbl = Instance.new("TextLabel", card)
-    titleLbl.Size = UDim2.new(1, 0, 0, 24)
+    titleLbl.Size = UDim2.new(1, 0, 0, 26)
     titleLbl.Position = UDim2.new(0, 0, 0, 10)
     titleLbl.BackgroundTransparency = 1
-    titleLbl.Text = "🌲 MAKI EF SWARM (ALT)"
-    titleLbl.TextColor3 = Color3.fromRGB(30, 140, 60)
-    titleLbl.TextSize = 12
     titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextSize = 13
+    titleLbl.TextColor3 = Color3.fromRGB(30, 35, 45)
+    titleLbl.Text = "⚡ MAKI SWARM ALT"
 
-    local userLbl = Instance.new("TextLabel", card)
-    userLbl.Size = UDim2.new(1, 0, 0, 18)
-    userLbl.Position = UDim2.new(0, 0, 0, 36)
-    userLbl.BackgroundTransparency = 1
-    userLbl.Text = "👤 " .. tostring(LocalPlayer.Name)
-    userLbl.TextColor3 = Color3.fromRGB(80, 90, 110)
-    userLbl.TextSize = 10
-    userLbl.Font = Enum.Font.GothamSemibold
+    local subLbl = Instance.new("TextLabel", card)
+    subLbl.Size = UDim2.new(1, -20, 0, 36)
+    subLbl.Position = UDim2.new(0, 10, 0, 36)
+    subLbl.BackgroundTransparency = 1
+    subLbl.Font = Enum.Font.Gotham
+    subLbl.TextSize = 10
+    subLbl.TextColor3 = Color3.fromRGB(100, 110, 125)
+    subLbl.Text = string.format("👤 %s\n❄️ 3D Rendering: OFF (0%% CPU Mode)", LocalPlayer.Name)
 
-    local statusLbl = Instance.new("TextLabel", card)
-    statusLbl.Size = UDim2.new(1, 0, 0, 22)
-    statusLbl.Position = UDim2.new(0, 0, 0, 62)
-    statusLbl.BackgroundTransparency = 1
-    statusLbl.Text = "⚡ White Screen CPU Saver Active"
-    statusLbl.TextColor3 = Color3.fromRGB(120, 130, 150)
-    statusLbl.TextSize = 8.5
-    statusLbl.Font = Enum.Font.Gotham
+    print(string.format("[Maki Alt ⚡] White Screen & 0%% CPU Saver activated for %s!", LocalPlayer.Name))
 end
 
 task.spawn(function()
-    task.wait(1.0)
+    task.wait(1.5)
     setupAltWhiteScreen()
-end)
-
-task.spawn(function()
-    while _G.MAKI_EF_SWARM_RUNNING do
-        task.wait(5.0)
-        if not isMain and not whiteScreenGui then
-            setupAltWhiteScreen()
-        end
-    end
 end)
 
 -- ========================================================================
@@ -645,185 +491,102 @@ local function isSpecialEventItem(itemName)
     if not itemName then return false end
     local n = itemName:lower()
     if n:find("eif") or n:find("eir") or n:find("eye of") or n:find("inferno") or n:find("valhalla") or n:find("eldenbark")
-        or n:find("enchanted inner focus") or n:find("enchanted inner rage") or n:find("inner focus") or n:find("inner rage") then
+        or n:find("radiant") or n:find("abyssal") or n:find("cosmetic") or n:find("event") or n:find("candy")
+        or n:find("present") or n:find("egg") or n:find("santa") or n:find("summer") or n:find("halloween") or n:find("anniversary") then
         return true
     end
     return false
 end
 
-local function sendDropNotification(playerName, itemName, rarity, category, dungeonName, diffTier)
-    local rLower = rarity and rarity:lower() or "common"
-    local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(itemName)
-    local isEvent = isSpecialEventItem(itemName)
+local function isLegendaryOrHigher(tool)
+    if not tool then return false, "unknown" end
+    local rVal = tool:FindFirstChild("rarity") or tool:FindFirstChild("Rarity") or tool:FindFirstChild("itemRarity")
+    local rarityStr = rVal and tostring(rVal.Value):lower() or ""
 
-    local color = 10181046
-    local titlePrefix = "💜 PURPLE DROP!"
-    local rarityText = (rarity or "Item"):upper()
-
-    if isCollect then
-        if not Config.NotifyCollects then return end
-        color = 10181046
-        titlePrefix = string.format("💎 PURPLE COLLECT DROP! [%s] ⭐", collectPrefix)
-        rarityText = string.format("PURPLE COLLECT (%s)", collectPrefix)
-    elseif isEvent then
-        color = 16753920
-        titlePrefix = "🔥 SPECIAL EVENT / UNIQUE DROP! ⭐"
-        rarityText = "EVENT / MYTHIC"
-    elseif rLower == "legendary" then
-        if not Config.NotifyLegendary then return end
-        color = 16766720
-        titlePrefix = "🌟 LEGENDARY DROP!"
-    elseif rLower == "ultimate" then
-        if not Config.NotifyUltimate then return end
-        color = 16711680
-        titlePrefix = "🔥 ULTIMATE DROP!"
-    elseif rLower == "mythic" then
-        color = 33023
-        titlePrefix = "💎 MYTHIC DROP!"
-    else
-        return
+    if rarityStr:find("legendary") or rarityStr:find("ultimate") or rarityStr:find("mythic") or rarityStr:find("unique") then
+        return true, rarityStr
     end
 
+    local nameLower = tool.Name:lower()
+    if nameLower:find("legendary") or nameLower:find("ultimate") or nameLower:find("mythic") or nameLower:find("unique") then
+        return true, "name_match"
+    end
+
+    local isCollect, prefix, _, _ = isPurpleCollect(tool.Name)
+    if isCollect then
+        return true, prefix
+    end
+
+    return false, rarityStr
+end
+
+local function notifyDrop(itemName, rarity, dungeonName)
     local embed = {
-        title = titlePrefix,
-        color = color,
+        title = "✨ Rare Item Dropped • Project Maki",
+        color = 16753920,
         fields = {
-            { name = "👤 Account", value = string.format("`%s`", playerName), inline = true },
-            { name = "⚔️ Item Dropped", value = string.format("**%s**", itemName), inline = true },
-            { name = "💎 Rarity / Tier", value = string.format("`%s` (%s)", rarityText, category or "Gear"), inline = true },
-            { name = "🏰 Dungeon & Tier", value = string.format("%s (%s)", dungeonName or Config.CurrentDungeon or "Enchanted Forest", diffTier or Config.CurrentDiff or "Nightmare"), inline = true },
-            { name = "🔒 Inventory Status", value = "🛡️ **100% PROTECTED & KEPT IN INVENTORY**", inline = false }
+            { name = "👤 Account", value = string.format("`%s`", LocalPlayer.Name), inline = true },
+            { name = "🎁 Item", value = string.format("**%s**", tostring(itemName)), inline = true },
+            { name = "💎 Rarity", value = string.format("`%s`", tostring(rarity):upper()), inline = true },
+            { name = "🏰 Dungeon", value = tostring(dungeonName or "Enchanted Forest (Nightmare)"), inline = true },
+            { name = "⚡ Role", value = isMain and "👑 Main/Carry" or "⚔️ Alt Swarm Member", inline = true }
         },
-        footer = { text = "Project Maki • EF Active Swarm Suite" },
+        footer = { text = "Project Maki • Multi-Account Swarm Suite" },
         timestamp = DateTime.now():ToIsoDate()
     }
-
     sendDiscordWebhook(embed)
-    print(string.format("[Maki Loot 📢] %s dropped %s (%s) ➔ Sent to Discord!", playerName, itemName, rarity))
 end
 
 if announceDropRemote then
-    announceDropRemote.OnClientEvent:Connect(function(dropPlayerName, dropItemName, dropRarity, ...)
-        if dropPlayerName and dropItemName and dropRarity then
-            sendDropNotification(tostring(dropPlayerName), tostring(dropItemName), tostring(dropRarity), "Dungeon Drop", "Enchanted Forest", Config.CurrentDiff or "Nightmare")
+    announceDropRemote.OnClientEvent:Connect(function(...)
+        local args = { ... }
+        local itemName = tostring(args[1] or "Unknown Item")
+        local isCollect, prefix, dungeonName, _ = isPurpleCollect(itemName)
+        if isCollect then
+            notifyDrop(itemName, prefix, dungeonName)
+        else
+            notifyDrop(itemName, "LEGENDARY+", "Enchanted Forest (Nightmare)")
         end
     end)
 end
 
 -- ========================================================================
---  [MODULE 3] 100% PROVEN GOLDEN-MASTER AUTO-SELL ENGINE
+--  [MODULE 3] 100% PROTECTED AUTO-SELL
 -- ========================================================================
-local knownInventoryKeys = {}
-local initialScanComplete = false
-
-local function isItemProtectedFromSell(category, itemName, rarity, isEquipped)
-    if isEquipped then return true end
-
-    local rLower = rarity and rarity:lower() or "common"
-    if rLower == "legendary" or rLower == "ultimate" or rLower == "mythic" then
-        return true
-    end
-
-    if isSpecialEventItem(itemName) then
-        return true
-    end
-
-    local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(itemName)
-
-    -- RULE 1: Abilities have NO purple collects. Sell all abilities below Legendary/Mythic/Ultimate/Special!
-    if category == "ability" then
-        return false
-    end
-
-    -- RULE 2: High-Tier Purple Weapons (Eldenbark from EF & Valhalla from NL) are 100% PROTECTED!
-    if category == "weapon" then
-        if isCollect and isHighTier then
-            return true
-        end
-        return false
-    end
-
-    -- RULE 3: Armor (Chests & Helmets) -> KEEP all Purple Collects from all 11 dungeons!
-    if category == "chest" or category == "helmet" then
-        if isCollect then
-            return true
-        end
-        return false
-    end
-
-    return false
-end
-
 local function executeSafeAutoSell()
-    if not Config.AutoSellTrashes or not reloadInvyRemote or not sellItemEventRemote then return end
-    local ok, inv = pcall(function() return reloadInvyRemote:InvokeServer() end)
-    if not ok or type(inv) ~= "table" then return end
+    if not Config.AutoSellTrashes or not sellItemEventRemote then return end
+    task.spawn(function()
+        if reloadInvyRemote then pcall(function() reloadInvyRemote:InvokeServer() end) end
+        task.wait(0.5)
 
-    local itemsToSell = { weapon = {}, ability = {}, chest = {}, helmet = {} }
-    local totalSold = 0
+        local bp = LocalPlayer:FindFirstChild("Backpack")
+        if not bp then return end
 
-    local function scanCategory(category, tbl, keyPrefix)
-        if type(tbl) ~= "table" then return end
-        for key, item in pairs(tbl) do
-            local itemKey = tostring(key)
-            local isEquipped = (typeof(item.equipped) == "table" and (item.equipped.q or item.equipped.e)) or (item.equipped == true)
-            local rarity = item.rarity and item.rarity:lower() or "common"
-            local itemName = item.name or item.displayName or itemKey
+        local soldCount = 0
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                local itemName = item.Name
+                local isSafeCollect = isPurpleCollect(itemName)
+                local isEventItem = isSpecialEventItem(itemName)
+                local isHighTier, _ = isLegendaryOrHigher(item)
 
-            local protected = isItemProtectedFromSell(category, itemName, rarity, isEquipped)
-
-            if initialScanComplete and not knownInventoryKeys[itemKey] then
-                knownInventoryKeys[itemKey] = true
-                if protected and (rarity == "legendary" or rarity == "ultimate" or rarity == "mythic" or isPurpleCollect(itemName) or isSpecialEventItem(itemName)) then
-                    sendDropNotification(LocalPlayer.Name, itemName, rarity, category, Config.CurrentDungeon, Config.CurrentDiff)
-                end
-            else
-                knownInventoryKeys[itemKey] = true
-            end
-
-            if not protected then
-                local idNum = tonumber(string.sub(itemKey, #keyPrefix + 1)) or tonumber(string.match(itemKey, "%d+"))
-                if idNum then
-                    table.insert(itemsToSell[category], idNum)
-                    totalSold = totalSold + 1
+                if isSafeCollect or isEventItem or isHighTier then
+                    -- PROTECTED: NEVER SELL
+                else
+                    pcall(function() sellItemEventRemote:FireServer(item) end)
+                    soldCount = soldCount + 1
+                    task.wait(0.04)
                 end
             end
         end
-    end
-
-    scanCategory("weapon", inv.weapons, "weapon_")
-    scanCategory("ability", inv.abilities, "ability_")
-    scanCategory("chest", inv.chests, "chest_")
-    scanCategory("helmet", inv.helmets, "helmet_")
-
-    initialScanComplete = true
-
-    if totalSold > 0 then
-        pcall(function() sellItemEventRemote:FireServer(itemsToSell) end)
-        print(string.format("[%s] 💰 Auto-Sold %d trash items! (Eldenbark Collectibles, Legendary/EIF/EIR 100%% SAFE)", LocalPlayer.Name, totalSold))
-    end
+        if soldCount > 0 then
+            print(string.format("[Maki Auto-Sell 💰] Safely sold %d trash items.", soldCount))
+        end
+    end)
 end
 
-task.spawn(function()
-    task.wait(2.0)
-    if reloadInvyRemote then
-        local ok, inv = pcall(function() return reloadInvyRemote:InvokeServer() end)
-        if ok and type(inv) == "table" then
-            local function seed(tbl)
-                if type(tbl) ~= "table" then return end
-                for key, _ in pairs(tbl) do knownInventoryKeys[tostring(key)] = true end
-            end
-            seed(inv.weapons)
-            seed(inv.abilities)
-            seed(inv.chests)
-            seed(inv.helmets)
-            initialScanComplete = true
-        end
-    end
-end)
-
 -- ========================================================================
---  SPELL CASTING & COOLDOWN ENGINE (GOLDEN MASTER PROVEN)
+--  SPELL CASTING & COOLDOWN ENGINE
 -- ========================================================================
 local function getAbilityTools()
     local qTool, eTool = nil, nil
@@ -872,19 +635,11 @@ local function castSlot(slotKey, tool)
         if abilityUsedRemote then pcall(function() abilityUsedRemote:FireServer(sKey, tool) end) end
         if abilityCastRemote then pcall(function() abilityCastRemote:FireServer(sKey) end) end
         pcall(function() tool:Activate() end)
-        if VirtualInputManager then
-            local key = (sKey == 'q' and Enum.KeyCode.Q) or (sKey == 'e' and Enum.KeyCode.E) or Enum.KeyCode.Q
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(true, key, false, game)
-                task.wait(0.01)
-                VirtualInputManager:SendKeyEvent(false, key, false, game)
-            end)
-        end
     end)
 end
 
 -- ========================================================================
---  HIGHWAY WAYPOINT LOADER (DISK + EMBEDDED FALLBACK)
+--  HIGHWAY WAYPOINT LOADER
 -- ========================================================================
 local HighwayFileName = "dqr_highway_enchanted_forest.json"
 local cachedHighway = nil
@@ -892,10 +647,9 @@ local cachedHighway = nil
 local function loadHighwayPoints()
     if cachedHighway and #cachedHighway > 0 then return cachedHighway end
 
-    -- 1. Try reading from disk
-    if isfile and isfile(HighwayFileName) then
+    if safeIsFile(HighwayFileName) then
         local ok, data = pcall(function()
-            return HttpService:JSONDecode(readfile(HighwayFileName))
+            return HttpService:JSONDecode(safeReadFile(HighwayFileName))
         end)
         if ok and data then
             local pts = data.points or (type(data) == "table" and #data > 0 and data)
@@ -906,7 +660,6 @@ local function loadHighwayPoints()
         end
     end
 
-    -- 2. Fallback to embedded 1,015 recorded waypoints
     if EMBEDDED_WAYPOINTS and #EMBEDDED_WAYPOINTS > 0 then
         cachedHighway = EMBEDDED_WAYPOINTS
         return EMBEDDED_WAYPOINTS
@@ -930,7 +683,7 @@ local function findClosestWaypointIndex(pos, waypoints, minIdx)
     return bestIdx, bestDist
 end
 
--- Swarm No-Collision Engine (Allows all 7 accounts to occupy the exact same 1-stud sphere without pushing)
+-- Swarm No-Collision Engine
 RunService.Stepped:Connect(function()
     for _, p in ipairs(Players:GetPlayers()) do
         local c = p.Character
@@ -964,7 +717,7 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  ENEMY SCANNER & TARGETING (WITH ANCIENT SPIRIT BYPASS)
+--  ENEMY SCANNER & TARGETING
 -- ========================================================================
 local function hasLineOfSight(startPos, targetPos, isBoss)
     if isBoss then return true end
@@ -986,19 +739,14 @@ local function hasLineOfSight(startPos, targetPos, isBoss)
     return true
 end
 
--- ========================================================================
---  [PRIORITY 0] COMPREHENSIVE BOSS & SUB-BOSS RADAR (SCANS GLOBALLY)
--- ========================================================================
 local function isBossTarget(desc, hum, root)
     if not desc or not hum or not root then return false, false end
     local n = desc.Name:lower()
 
-    -- Exclude regular trash mobs
     if n:find("mushroom") or n:find("spear") or n:find("archer") or n:find("spider") or n:find("bat") or n:find("wolf") or n:find("spirit") then
         return false, false
     end
 
-    -- Match any Boss / Sub-Boss name (including Dragon, Tree, Golem, etc.), or any entity with >= 500,000 HP
     local isBoss = (n:find("dragon") ~= nil)
         or (n:find("tree") ~= nil)
         or (n:find("golem") ~= nil)
@@ -1017,7 +765,6 @@ local function isBossTarget(desc, hum, root)
 
     if not isBoss then return false, false end
 
-    -- Distinguish Chasm Boss (Ancient Tree in Room 5 across void -> 112s) vs Ground Boss (Dragon, Golem, Ent -> 80s)
     local isTreeChasm = (n:find("ancient tree") ~= nil or (n:find("tree") and n:find("boss")) or n:find("ancient oak"))
         and not n:find("dragon") and not n:find("golem") and not n:find("ent")
 
@@ -1028,7 +775,7 @@ local function isBossTarget(desc, hum, root)
     return true, isTreeChasm
 end
 
-local function findBossOrTree(currentWp, myPos)
+local function findBossOrTree()
     local checked = {}
 
     local function inspectObj(desc)
@@ -1044,11 +791,6 @@ local function findBossOrTree(currentWp, myPos)
         if hum and hum.Health > 0 and root then
             local isBoss, isTreeChasm = isBossTarget(desc, hum, root)
             if isBoss then
-                local n = desc.Name:lower()
-                -- PERMANENT FIX: Do NOT premature-lock Dragon while still clearing Room 6 / corridor (WP < 970)
-                if n:find("dragon") and (currentWp and currentWp < 970) and (myPos and myPos.X > -1150.0) then
-                    return nil
-                end
                 return desc, hum, root, isTreeChasm
             end
         end
@@ -1093,9 +835,6 @@ local function findBossOrTree(currentWp, myPos)
     return nil, nil, nil, false
 end
 
--- ========================================================================
---  [MODULE 5.5] 100% GANG READINESS & DYNAMIC 1:1 REJOIN TRACKER
--- ========================================================================
 local function checkGangReadiness(myPos, targetEnemyPos, maxSpread, targetAssemblyDist)
     local gangUsernames = {}
     if Config.CarryUsername and #Config.CarryUsername > 0 then table.insert(gangUsernames, Config.CarryUsername) end
@@ -1122,7 +861,6 @@ local function checkGangReadiness(myPos, targetEnemyPos, maxSpread, targetAssemb
                 local distToMe = (pPos - myPos).Magnitude
                 local distToMob = targetEnemyPos and (pPos - targetEnemyPos).Magnitude or 999.0
 
-                -- Count as assembled if tightly stacked with me (<= 8 studs) OR standing within the room assembly zone
                 if distToMe <= 8.0 or (targetEnemyPos and distToMob <= maxAllowedMobDist) then
                     assembledGangCount = assembledGangCount + 1
                 end
@@ -1134,7 +872,6 @@ local function checkGangReadiness(myPos, targetEnemyPos, maxSpread, targetAssemb
         return true, 1, 1, 1
     end
 
-    -- Swarm is ready when all living accounts in server are grouped at the assembly zone
     local isFullGangReady = (livingGangCount >= totalGangInServer) and (assembledGangCount >= totalGangInServer)
     return isFullGangReady, assembledGangCount, livingGangCount, totalGangInServer
 end
@@ -1163,12 +900,11 @@ local function scanLivingEnemies(currentWp)
             local dist = (myPos - pos).Magnitude
             local nameLower = obj.Name:lower()
 
-            -- Ignore Ancient Spirits (adds that do not need to be killed)
             if nameLower:find("spirit") then return end
 
             local isBoss, _ = isBossTarget(obj, hum, root)
             if isBoss and nameLower:find("dragon") and (currentWp and currentWp < 980) then
-                return -- Ignore Dragon in mob scan while clearing corridor / stairs!
+                return
             end
 
             table.insert(enemies, {
@@ -1259,7 +995,7 @@ local function getTargetGroup(enemies, myPos)
 end
 
 -- ========================================================================
---  [MODULE 4] FULL MASTER MULTI-TAB GUI (DASHBOARD, ALTS, DISCORD)
+--  [MODULE 4] FULL MASTER MULTI-TAB GUI
 -- ========================================================================
 local pGuiRef = LocalPlayer:WaitForChild("PlayerGui")
 local oldGui = pGuiRef:FindFirstChild("Maki_EF_SwarmGUI") or pGuiRef:FindFirstChild("Maki_MasterGui")
@@ -1278,154 +1014,162 @@ frame.BorderSizePixel = 0
 frame.Active = true
 frame.Draggable = true
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+local fStroke = Instance.new("UIStroke", frame)
+fStroke.Color = Color3.fromRGB(0, 140, 200)
+fStroke.Thickness = 1.5
 
-local stroke = Instance.new("UIStroke", frame)
-stroke.Color = isMain and Color3.fromRGB(50, 255, 130) or Color3.fromRGB(80, 200, 255)
-stroke.Thickness = 1.8
+local titleBar = Instance.new("Frame", frame)
+titleBar.Size = UDim2.new(1, 0, 0, 32)
+titleBar.BackgroundColor3 = Color3.fromRGB(18, 26, 38)
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
 
-local titleLbl = Instance.new("TextLabel", frame)
-titleLbl.Size = UDim2.new(1, -16, 0, 20)
-titleLbl.Position = UDim2.new(0, 8, 0, 4)
+local titleLbl = Instance.new("TextLabel", titleBar)
+titleLbl.Size = UDim2.new(1, -70, 1, 0)
+titleLbl.Position = UDim2.new(0, 10, 0, 0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.TextColor3 = isMain and Color3.fromRGB(80, 255, 150) or Color3.fromRGB(120, 220, 255)
-titleLbl.TextSize = 9.5
 titleLbl.Font = Enum.Font.GothamBold
+titleLbl.TextSize = 10
+titleLbl.TextColor3 = Color3.fromRGB(0, 200, 255)
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-titleLbl.Text = string.format("🌲 MAKI EF SWARM: %s [%s]", LocalPlayer.Name, isMain and "👑 MAIN / HOST" or "⚔️ SWARM ALT")
+titleLbl.Text = "🌲 MAKI SWARM • ENCHANTED FOREST"
 
-local tabBar = Instance.new("Frame", frame)
-tabBar.Size = UDim2.new(1, -16, 0, 22)
-tabBar.Position = UDim2.new(0, 8, 0, 26)
-tabBar.BackgroundTransparency = 1
+local roleBadge = Instance.new("TextLabel", titleBar)
+roleBadge.Size = UDim2.new(0, 52, 0, 18)
+roleBadge.Position = UDim2.new(1, -60, 0.5, -9)
+roleBadge.BackgroundColor3 = isMain and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(40, 160, 80)
+roleBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+roleBadge.Font = Enum.Font.GothamBold
+roleBadge.TextSize = 8
+roleBadge.Text = isMain and "👑 MAIN" or "⚔️ ALT"
+Instance.new("UICorner", roleBadge).CornerRadius = UDim.new(0, 4)
 
-local tabDashBtn = Instance.new("TextButton", tabBar)
-tabDashBtn.Size = UDim2.new(0.33, -2, 1, 0)
-tabDashBtn.Position = UDim2.new(0, 0, 0, 0)
-tabDashBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 200)
-tabDashBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-tabDashBtn.TextSize = 7.5
-tabDashBtn.Font = Enum.Font.GothamBold
-tabDashBtn.Text = "📊 DASHBOARD"
-Instance.new("UICorner", tabDashBtn).CornerRadius = UDim.new(0, 4)
+local tabContainer = Instance.new("Frame", frame)
+tabContainer.Size = UDim2.new(1, -16, 0, 24)
+tabContainer.Position = UDim2.new(0, 8, 0, 36)
+tabContainer.BackgroundTransparency = 1
 
-local tabAltsBtn = Instance.new("TextButton", tabBar)
-tabAltsBtn.Size = UDim2.new(0.33, -2, 1, 0)
-tabAltsBtn.Position = UDim2.new(0.33, 2, 0, 0)
-tabAltsBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 60)
-tabAltsBtn.TextColor3 = Color3.fromRGB(180, 190, 210)
-tabAltsBtn.TextSize = 7.5
-tabAltsBtn.Font = Enum.Font.GothamBold
-tabAltsBtn.Text = string.format("👥 ALTS (%d)", #Config.AltUsernames)
-Instance.new("UICorner", tabAltsBtn).CornerRadius = UDim.new(0, 4)
+local tabLayout = Instance.new("UIListLayout", tabContainer)
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.Padding = UDim.new(0, 4)
 
-local tabDiscordBtn = Instance.new("TextButton", tabBar)
-tabDiscordBtn.Size = UDim2.new(0.34, -2, 1, 0)
-tabDiscordBtn.Position = UDim2.new(0.66, 4, 0, 0)
-tabDiscordBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 60)
-tabDiscordBtn.TextColor3 = Color3.fromRGB(180, 190, 210)
-tabDiscordBtn.TextSize = 7.5
-tabDiscordBtn.Font = Enum.Font.GothamBold
-tabDiscordBtn.Text = "💬 DISCORD"
-Instance.new("UICorner", tabDiscordBtn).CornerRadius = UDim.new(0, 4)
+local pagesFolder = Instance.new("Folder", frame)
+pagesFolder.Name = "Pages"
 
-local pageDashboard = Instance.new("Frame", frame)
-pageDashboard.Size = UDim2.new(1, -16, 0, 234)
-pageDashboard.Position = UDim2.new(0, 8, 0, 50)
+local pageDashboard = Instance.new("Frame", pagesFolder)
+pageDashboard.Size = UDim2.new(1, -16, 1, -70)
+pageDashboard.Position = UDim2.new(0, 8, 0, 64)
 pageDashboard.BackgroundTransparency = 1
 pageDashboard.Visible = true
 
-local pageAlts = Instance.new("Frame", frame)
-pageAlts.Size = UDim2.new(1, -16, 0, 234)
-pageAlts.Position = UDim2.new(0, 8, 0, 50)
+local pageAlts = Instance.new("Frame", pagesFolder)
+pageAlts.Size = UDim2.new(1, -16, 1, -70)
+pageAlts.Position = UDim2.new(0, 8, 0, 64)
 pageAlts.BackgroundTransparency = 1
 pageAlts.Visible = false
 
-local pageDiscord = Instance.new("Frame", frame)
-pageDiscord.Size = UDim2.new(1, -16, 0, 234)
-pageDiscord.Position = UDim2.new(0, 8, 0, 50)
+local pageDiscord = Instance.new("Frame", pagesFolder)
+pageDiscord.Size = UDim2.new(1, -16, 1, -70)
+pageDiscord.Position = UDim2.new(0, 8, 0, 64)
 pageDiscord.BackgroundTransparency = 1
 pageDiscord.Visible = false
 
-local function setTab(tab)
-    pageDashboard.Visible = (tab == "dash")
-    pageAlts.Visible = (tab == "alts")
-    pageDiscord.Visible = (tab == "discord")
-
-    tabDashBtn.BackgroundColor3 = (tab == "dash") and Color3.fromRGB(0, 140, 200) or Color3.fromRGB(35, 42, 60)
-    tabDashBtn.TextColor3 = (tab == "dash") and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 190, 210)
-
-    tabAltsBtn.BackgroundColor3 = (tab == "alts") and Color3.fromRGB(140, 80, 220) or Color3.fromRGB(35, 42, 60)
-    tabAltsBtn.TextColor3 = (tab == "alts") and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 190, 210)
-
-    tabDiscordBtn.BackgroundColor3 = (tab == "discord") and Color3.fromRGB(88, 101, 242) or Color3.fromRGB(35, 42, 60)
-    tabDiscordBtn.TextColor3 = (tab == "discord") and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 190, 210)
+local function switchTab(targetPage, targetBtn)
+    for _, p in ipairs(pagesFolder:GetChildren()) do p.Visible = false end
+    targetPage.Visible = true
+    for _, btn in ipairs(tabContainer:GetChildren()) do
+        if btn:IsA("TextButton") then
+            btn.BackgroundColor3 = (btn == targetBtn) and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(25, 35, 50)
+            btn.TextColor3 = (btn == targetBtn) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 165, 185)
+        end
+    end
 end
 
-tabDashBtn.Activated:Connect(function() setTab("dash") end)
-tabAltsBtn.Activated:Connect(function() setTab("alts") end)
-tabDiscordBtn.Activated:Connect(function() setTab("discord") end)
+local function createTabBtn(name, page)
+    local btn = Instance.new("TextButton", tabContainer)
+    btn.Size = UDim2.new(0.32, -3, 1, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(25, 35, 50)
+    btn.TextColor3 = Color3.fromRGB(150, 165, 185)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 8.5
+    btn.Text = name
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    btn.Activated:Connect(function() switchTab(page, btn) end)
+    return btn
+end
 
-local statsBox = Instance.new("Frame", pageDashboard)
-statsBox.Size = UDim2.new(1, 0, 0, 82)
-statsBox.Position = UDim2.new(0, 0, 0, 0)
-statsBox.BackgroundColor3 = Color3.fromRGB(8, 12, 18)
-Instance.new("UICorner", statsBox).CornerRadius = UDim.new(0, 6)
+local btnDash = createTabBtn("📊 DASHBOARD", pageDashboard)
+local btnAlts = createTabBtn("👥 ALTS (0)", pageAlts)
+local btnDisc = createTabBtn("🔔 DISCORD", pageDiscord)
+switchTab(pageDashboard, btnDash)
 
-local statusLbl = Instance.new("TextLabel", statsBox)
-statusLbl.Size = UDim2.new(1, -10, 0, 16)
-statusLbl.Position = UDim2.new(0, 6, 0, 2)
+-- Dashboard Live Status Cards
+local statusCard = Instance.new("Frame", pageDashboard)
+statusCard.Size = UDim2.new(1, 0, 0, 50)
+statusCard.Position = UDim2.new(0, 0, 0, 0)
+statusCard.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
+Instance.new("UICorner", statusCard).CornerRadius = UDim.new(0, 5)
+
+local statusLbl = Instance.new("TextLabel", statusCard)
+statusLbl.Size = UDim2.new(1, -12, 0, 16)
+statusLbl.Position = UDim2.new(0, 6, 0, 3)
 statusLbl.BackgroundTransparency = 1
-statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
-statusLbl.TextSize = 8.5
 statusLbl.Font = Enum.Font.GothamBold
+statusLbl.TextSize = 8.5
+statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
 statusLbl.TextXAlignment = Enum.TextXAlignment.Left
 statusLbl.Text = "● STATUS: INITIALIZING..."
 
-local targetLbl = Instance.new("TextLabel", statsBox)
-targetLbl.Size = UDim2.new(1, -10, 0, 16)
-targetLbl.Position = UDim2.new(0, 6, 0, 20)
+local targetLbl = Instance.new("TextLabel", statusCard)
+targetLbl.Size = UDim2.new(1, -12, 0, 14)
+targetLbl.Position = UDim2.new(0, 6, 0, 18)
 targetLbl.BackgroundTransparency = 1
-targetLbl.TextColor3 = Color3.fromRGB(160, 255, 180)
+targetLbl.Font = Enum.Font.Gotham
 targetLbl.TextSize = 8
-targetLbl.Font = Enum.Font.GothamBold
+targetLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
 targetLbl.TextXAlignment = Enum.TextXAlignment.Left
-targetLbl.Text = "🎯 TARGET: Awaiting Dungeon..."
+targetLbl.Text = "🎯 TARGET: SCANNING..."
 
-local wpLbl = Instance.new("TextLabel", statsBox)
-wpLbl.Size = UDim2.new(1, -10, 0, 16)
-wpLbl.Position = UDim2.new(0, 6, 0, 38)
-wpLbl.BackgroundTransparency = 1
-wpLbl.TextColor3 = Color3.fromRGB(255, 220, 100)
-wpLbl.TextSize = 8
-wpLbl.Font = Enum.Font.GothamBold
-wpLbl.TextXAlignment = Enum.TextXAlignment.Left
-wpLbl.Text = "📍 HIGHWAY: 0 / 1015 (0%)"
-
-local infoLbl = Instance.new("TextLabel", statsBox)
-infoLbl.Size = UDim2.new(1, -10, 0, 16)
-infoLbl.Position = UDim2.new(0, 6, 0, 56)
+local infoLbl = Instance.new("TextLabel", statusCard)
+infoLbl.Size = UDim2.new(1, -12, 0, 14)
+infoLbl.Position = UDim2.new(0, 6, 0, 32)
 infoLbl.BackgroundTransparency = 1
-infoLbl.TextColor3 = Color3.fromRGB(140, 180, 200)
-infoLbl.TextSize = 7.5
 infoLbl.Font = Enum.Font.Gotham
+infoLbl.TextSize = 7.5
+infoLbl.TextColor3 = Color3.fromRGB(160, 180, 205)
 infoLbl.TextXAlignment = Enum.TextXAlignment.Left
-infoLbl.Text = "🛡️ 105s Swarm Sync • 1-Cycle Strike Active"
+infoLbl.Text = "⚡ 105-Stud Swarm Synchronizer Active"
 
--- Row 1: Hardcore Toggle & Ultra-Potato Toggle
-local hardcoreToggleBtn = Instance.new("TextButton", pageDashboard)
-hardcoreToggleBtn.Size = UDim2.new(0.48, -2, 0, 22)
-hardcoreToggleBtn.Position = UDim2.new(0, 0, 0, 86)
-hardcoreToggleBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(180, 40, 40) or Color3.fromRGB(40, 45, 60)
-hardcoreToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-hardcoreToggleBtn.TextSize = 7.5
-hardcoreToggleBtn.Font = Enum.Font.GothamBold
-hardcoreToggleBtn.Text = Config.HardcoreMode and "💀 HARDCORE: ON" or "💀 HARDCORE: OFF"
-Instance.new("UICorner", hardcoreToggleBtn).CornerRadius = UDim.new(0, 4)
+local wpCard = Instance.new("Frame", pageDashboard)
+wpCard.Size = UDim2.new(1, 0, 0, 26)
+wpCard.Position = UDim2.new(0, 0, 0, 56)
+wpCard.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
+Instance.new("UICorner", wpCard).CornerRadius = UDim.new(0, 5)
 
-hardcoreToggleBtn.Activated:Connect(function()
+local wpLbl = Instance.new("TextLabel", wpCard)
+wpLbl.Size = UDim2.new(1, -12, 1, 0)
+wpLbl.Position = UDim2.new(0, 6, 0, 0)
+wpLbl.BackgroundTransparency = 1
+wpLbl.Font = Enum.Font.GothamBold
+wpLbl.TextSize = 8.5
+wpLbl.TextColor3 = Color3.fromRGB(0, 200, 255)
+wpLbl.TextXAlignment = Enum.TextXAlignment.Left
+wpLbl.Text = "📍 HIGHWAY: 0 / 1,015 (0%)"
+
+-- Toggles
+local hcToggleBtn = Instance.new("TextButton", pageDashboard)
+hcToggleBtn.Size = UDim2.new(0.48, -2, 0, 22)
+hcToggleBtn.Position = UDim2.new(0, 0, 0, 86)
+hcToggleBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(200, 40, 40) or Color3.fromRGB(40, 45, 60)
+hcToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hcToggleBtn.TextSize = 7.5
+hcToggleBtn.Font = Enum.Font.GothamBold
+hcToggleBtn.Text = Config.HardcoreMode and "💀 HARDCORE: ON" or "💀 HARDCORE: OFF"
+Instance.new("UICorner", hcToggleBtn).CornerRadius = UDim.new(0, 4)
+
+hcToggleBtn.Activated:Connect(function()
     Config.HardcoreMode = not Config.HardcoreMode
-    hardcoreToggleBtn.Text = Config.HardcoreMode and "💀 HARDCORE: ON" or "💀 HARDCORE: OFF"
-    hardcoreToggleBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(180, 40, 40) or Color3.fromRGB(40, 45, 60)
+    hcToggleBtn.Text = Config.HardcoreMode and "💀 HARDCORE: ON" or "💀 HARDCORE: OFF"
+    hcToggleBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(200, 40, 40) or Color3.fromRGB(40, 45, 60)
     saveConfig()
 end)
 
@@ -1447,7 +1191,6 @@ potatoToggleBtn.Activated:Connect(function()
     saveConfig()
 end)
 
--- Row 2: Auto-Sell Toggle & Swarm Pause Toggle
 local autoSellToggleBtn = Instance.new("TextButton", pageDashboard)
 autoSellToggleBtn.Size = UDim2.new(0.48, -2, 0, 22)
 autoSellToggleBtn.Position = UDim2.new(0, 0, 0, 112)
@@ -1541,6 +1284,67 @@ addAltBtn.Font = Enum.Font.GothamBold
 addAltBtn.Text = "➕ ADD ALT"
 Instance.new("UICorner", addAltBtn).CornerRadius = UDim.new(0, 4)
 
+local altsScroll = Instance.new("ScrollingFrame", pageAlts)
+altsScroll.Size = UDim2.new(1, 0, 0, 174)
+altsScroll.Position = UDim2.new(0, 0, 0, 56)
+altsScroll.BackgroundTransparency = 1
+altsScroll.BorderSizePixel = 0
+altsScroll.ScrollBarThickness = 3
+altsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+altsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local altsListLayout = Instance.new("UIListLayout", altsScroll)
+altsListLayout.Padding = UDim.new(0, 4)
+
+local function updateAltsTracker()
+    btnAlts.Text = string.format("👥 ALTS (%d)", #Config.AltUsernames)
+    for _, c in ipairs(altsScroll:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+
+    for idx, altName in ipairs(Config.AltUsernames) do
+        local row = Instance.new("Frame", altsScroll)
+        row.Size = UDim2.new(1, 0, 0, 24)
+        row.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+        local pObj = Players:FindFirstChild(altName)
+        local isOnline = (pObj ~= nil)
+
+        local dot = Instance.new("Frame", row)
+        dot.Size = UDim2.new(0, 8, 0, 8)
+        dot.Position = UDim2.new(0, 6, 0.5, -4)
+        dot.BackgroundColor3 = isOnline and Color3.fromRGB(80, 255, 140) or Color3.fromRGB(120, 130, 145)
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+        local nameLbl = Instance.new("TextLabel", row)
+        nameLbl.Size = UDim2.new(0.65, -20, 1, 0)
+        nameLbl.Position = UDim2.new(0, 20, 0, 0)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Font = Enum.Font.Gotham
+        nameLbl.TextSize = 8
+        nameLbl.TextColor3 = isOnline and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 150, 165)
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.Text = string.format("%d. %s", idx, altName)
+
+        local removeBtn = Instance.new("TextButton", row)
+        removeBtn.Size = UDim2.new(0, 20, 0, 18)
+        removeBtn.Position = UDim2.new(1, -24, 0.5, -9)
+        removeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+        removeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        removeBtn.TextSize = 7.5
+        removeBtn.Font = Enum.Font.GothamBold
+        removeBtn.Text = "❌"
+        Instance.new("UICorner", removeBtn).CornerRadius = UDim.new(0, 3)
+
+        removeBtn.Activated:Connect(function()
+            table.remove(Config.AltUsernames, idx)
+            saveConfig()
+            updateAltsTracker()
+        end)
+    end
+end
+
 local function handleAddAltEF()
     local text = (altInput.Text or ""):gsub("%s+", "")
     if #text > 0 then
@@ -1561,90 +1365,12 @@ end
 addAltBtn.MouseButton1Click:Connect(handleAddAltEF)
 addAltBtn.Activated:Connect(handleAddAltEF)
 altInput.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        handleAddAltEF()
-    end
+    if enterPressed then handleAddAltEF() end
 end)
-
-local altsScroll = Instance.new("ScrollingFrame", pageAlts)
-altsScroll.Size = UDim2.new(1, 0, 0, 174)
-altsScroll.Position = UDim2.new(0, 0, 0, 56)
-altsScroll.BackgroundTransparency = 1
-altsScroll.BorderSizePixel = 0
-altsScroll.ScrollBarThickness = 3
-altsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-altsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-
-local altsListLayout = Instance.new("UIListLayout", altsScroll)
-altsListLayout.Padding = UDim.new(0, 4)
-
-local function updateAltsTracker()
-    for _, child in ipairs(altsScroll:GetChildren()) do
-        if child:IsA("Frame") then child:Destroy() end
-    end
-
-    local mainInGame = (Config.CarryUsername and #Config.CarryUsername > 0) and (Players:FindFirstChild(Config.CarryUsername) ~= nil) or false
-    local rowMain = Instance.new("Frame", altsScroll)
-    rowMain.Size = UDim2.new(1, -6, 0, 24)
-    rowMain.BackgroundColor3 = Color3.fromRGB(16, 26, 36)
-    Instance.new("UICorner", rowMain).CornerRadius = UDim.new(0, 4)
-
-    local lblMain = Instance.new("TextLabel", rowMain)
-    lblMain.Size = UDim2.new(1, -8, 1, 0)
-    lblMain.Position = UDim2.new(0, 6, 0, 0)
-    lblMain.BackgroundTransparency = 1
-    lblMain.TextColor3 = mainInGame and Color3.fromRGB(80, 255, 140) or Color3.fromRGB(255, 100, 100)
-    lblMain.TextSize = 7.5
-    lblMain.Font = Enum.Font.GothamBold
-    lblMain.TextXAlignment = Enum.TextXAlignment.Left
-    lblMain.Text = string.format("👑 MAIN: %s • %s", (#Config.CarryUsername > 0 and Config.CarryUsername or "Not Set"), mainInGame and "🟢 IN SERVER" or "🔴 OFFLINE")
-
-    for idx, altName in ipairs(Config.AltUsernames) do
-        local altP = Players:FindFirstChild(altName)
-        local altInGame = (altP ~= nil)
-        local altHum = altP and altP.Character and altP.Character:FindFirstChildOfClass("Humanoid")
-        local altHpStr = altHum and string.format("HP: %d/%d", math.floor(altHum.Health), math.floor(altHum.MaxHealth)) or "READY"
-
-        local row = Instance.new("Frame", altsScroll)
-        row.Size = UDim2.new(1, -6, 0, 24)
-        row.BackgroundColor3 = Color3.fromRGB(16, 22, 30)
-        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
-
-        local lbl = Instance.new("TextLabel", row)
-        lbl.Size = UDim2.new(1, -36, 1, 0)
-        lbl.Position = UDim2.new(0, 6, 0, 0)
-        lbl.BackgroundTransparency = 1
-        lbl.TextColor3 = altInGame and Color3.fromRGB(120, 220, 255) or Color3.fromRGB(160, 170, 185)
-        lbl.TextSize = 7.5
-        lbl.Font = Enum.Font.Gotham
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.Text = string.format("[%d] %s • %s (%s)", idx, altName, altInGame and "🟢 IN SERVER" or "⚪ CONNECTING", altHpStr)
-
-        local removeBtn = Instance.new("TextButton", row)
-        removeBtn.Size = UDim2.new(0, 20, 0, 18)
-        removeBtn.Position = UDim2.new(1, -24, 0.5, -9)
-        removeBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
-        removeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        removeBtn.TextSize = 8
-        removeBtn.Font = Enum.Font.GothamBold
-        removeBtn.Text = "❌"
-        Instance.new("UICorner", removeBtn).CornerRadius = UDim.new(0, 3)
-
-        removeBtn.Activated:Connect(function()
-            table.remove(Config.AltUsernames, idx)
-            saveConfig()
-            updateAltsTracker()
-        end)
-    end
-end
-
--- addAltBtn handled above
 
 task.spawn(function()
     while _G.MAKI_EF_SWARM_RUNNING do
-        if pageAlts.Visible then
-            updateAltsTracker()
-        end
+        if pageAlts.Visible then updateAltsTracker() end
         task.wait(1.5)
     end
 end)
@@ -1708,44 +1434,8 @@ local function areAllAltsInDungeon()
     return (present >= total), present, total
 end
 
--- ========================================================================
---  SWARM SYNCHRONIZER (WAIT FOR EVERYONE AT 105-STUD STANDOFF LINE)
--- ========================================================================
-local function checkSwarmReadiness(targetCenter, zoneDist)
-    local threshold = zoneDist or 108.0
-    local swarmMembers = { Config.CarryUsername or "SungJinAh_Maki" }
-    for _, altName in ipairs(Config.AltUsernames) do
-        table.insert(swarmMembers, altName)
-    end
-
-    local totalLiving = 0
-    local inZoneCount = 0
-
-    for _, uName in ipairs(swarmMembers) do
-        local p = Players:FindFirstChild(uName)
-        if p and p.Character then
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-            if hum and hum.Health > 0 and hrp then
-                totalLiving = totalLiving + 1
-                local d = (hrp.Position - targetCenter).Magnitude
-                if d <= threshold then
-                    inZoneCount = inZoneCount + 1
-                end
-            end
-        end
-    end
-
-    if totalLiving <= 1 then
-        return true, 1, 1
-    end
-
-    return (inZoneCount >= totalLiving), inZoneCount, totalLiving
-end
-
 local function instantAcceptAndDestroyPopup(gui)
     if not gui then return end
-    -- Accept any join request popup
     local confirmBtn = gui:FindFirstChild("confirm", true) 
         or gui:FindFirstChild("accept", true) 
         or gui:FindFirstChild("yes", true)
@@ -1754,10 +1444,12 @@ local function instantAcceptAndDestroyPopup(gui)
         or gui:FindFirstChild("Yes", true)
 
     if confirmBtn then
-        universalButtonClick(confirmBtn)
+        pcall(function()
+            for _, c in ipairs(getconnections(confirmBtn.Activated)) do c:Fire() end
+            for _, c in ipairs(getconnections(confirmBtn.MouseButton1Click)) do c:Fire() end
+        end)
     end
 
-    -- Extract requester name from prompt label if present
     local pLbl = gui:FindFirstChild("prompt", true) or gui:FindFirstChild("text", true) or gui:FindFirstChild("TextLabel", true)
     if pLbl and pLbl:IsA("TextLabel") and pLbl.Text and respondJoinRequestRemote then
         for _, altName in ipairs(Config.AltUsernames) do
@@ -1774,104 +1466,72 @@ local function scanAndAcceptAllJoinPopups()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     if not pg then return end
 
-    for _, c in ipairs(pg:GetChildren()) do
-        local n = c.Name:lower()
-        if n:find("join") or n:find("request") or n:find("confirm") or n:find("party") or n:find("invite") then
-            instantAcceptAndDestroyPopup(c)
-        end
+    for _, name in ipairs({"requestGui", "joinRequestGui", "partyRequestGui", "promptGui", "joinPromptGui"}) do
+        local g = pg:FindFirstChild(name)
+        if g then instantAcceptAndDestroyPopup(g) end
     end
 
-    if CoreGui then
-        for _, c in ipairs(CoreGui:GetChildren()) do
-            local n = c.Name:lower()
-            if n:find("join") or n:find("request") or n:find("confirm") then
-                instantAcceptAndDestroyPopup(c)
+    for _, desc in ipairs(pg:GetChildren()) do
+        if desc:IsA("ScreenGui") and desc.Name ~= "Maki_EF_SwarmGUI" and desc.Name ~= "Maki_Alt_WhiteScreen" then
+            local nLower = desc.Name:lower()
+            if nLower:find("request") or nLower:find("join") or nLower:find("prompt") then
+                instantAcceptAndDestroyPopup(desc)
             end
         end
     end
 end
 
-pGuiRef.ChildAdded:Connect(function(child)
-    local n = child.Name:lower()
-    if n:find("join") or n:find("request") or n:find("confirm") or n:find("party") then
-        instantAcceptAndDestroyPopup(child)
-    end
-end)
-
-if showJoinRemote and respondJoinRequestRemote then
+if showJoinRemote then
     showJoinRemote.OnClientEvent:Connect(function(requesterName, ...)
         if isMain then
-            local nameStr = tostring(requesterName)
-            pcall(function()
-                respondJoinRequestRemote:FireServer(nameStr, true)
-            end)
-            print(string.format("[Maki Instant Accept] ⚡ Instantly Approved Alt: %s (0ms)!", nameStr))
+            if requesterName then
+                if respondJoinRequestRemote then
+                    pcall(function() respondJoinRequestRemote:FireServer(requesterName, true) end)
+                end
+            end
             task.spawn(function()
+                task.wait(0.01)
                 scanAndAcceptAllJoinPopups()
             end)
         end
     end)
 end
 
--- Main / Host Ultra-Fast Auto-Accept Loop (Runs in Lobby & Dungeon Staging)
+-- Alt Join Request Loop
 task.spawn(function()
     while _G.MAKI_EF_SWARM_RUNNING do
-        task.wait(0.04) -- 25Hz Ultra-Fast Auto-Accept
-        if isMain then
-            scanAndAcceptAllJoinPopups()
-
-            if respondJoinRequestRemote then
-                for _, altName in ipairs(Config.AltUsernames) do
-                    pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
+        task.wait(1.0)
+        if not isMain and isMainLobby() then
+            local mainName = Config.CarryUsername or ""
+            if #mainName > 0 and Players:FindFirstChild(mainName) then
+                if sendJoinRequestRemote then
+                    pcall(function() sendJoinRequestRemote:FireServer(mainName) end)
                 end
-                for _, p in ipairs(Players:GetPlayers()) do
-                    if p ~= LocalPlayer then
-                        pcall(function() respondJoinRequestRemote:FireServer(p.Name, true) end)
-                    end
+                if joinDungeonRemote then
+                    pcall(function() joinDungeonRemote:InvokeServer(mainName) end)
                 end
             end
         end
     end
 end)
 
--- Alts in Main Lobby: Send Join Request to Main
-task.spawn(function()
-    while _G.MAKI_EF_SWARM_RUNNING do
-        if not isMain and isMainLobby() then
-            pcall(function()
-                if sendJoinRequestRemote then
-                    if Config.CarryUsername and #Config.CarryUsername > 0 then sendJoinRequestRemote:InvokeServer(Config.CarryUsername) end
-                end
-                if joinDungeonRemote then
-                    if Config.CarryUsername and #Config.CarryUsername > 0 then joinDungeonRemote:InvokeServer(Config.CarryUsername) end
-                end
-            end)
-        end
-        task.wait(0.25)
-    end
-end)
-
--- Main / Host: Create Enchanted Forest Nightmare Lobby
+-- Main Host Auto-Create & Launch
 local isCreatingLobby = false
 local function mainCreateAndLaunch()
     if not isMain or not isMainLobby() or isCreatingLobby then return end
     isCreatingLobby = true
 
-    loadConfig()
-
-    local dName = "Enchanted Forest"
-    local dDiff = "Nightmare"
-    local dReq  = 175
-
-    print(string.format("[Maki Main 🏰] Creating Lobby: %s (%s) [Req: %d] | Hardcore: %s...", dName, dDiff, dReq, tostring(Config.HardcoreMode)))
-
+    print("[Maki Main 👑] Creating Enchanted Forest (Nightmare) Lobby...")
     local ok, res = pcall(function()
-        if createLobbyRemote and createLobbyRemote.InvokeServer then
-            return createLobbyRemote:InvokeServer(dName, dDiff, dReq, Config.HardcoreMode, true, false)
-        elseif createLobbyRemote then
-            createLobbyRemote:FireServer(dName, dDiff, Config.HardcoreMode)
-            return true
+        if createLobbyRemote then
+            if createLobbyRemote:IsA("RemoteFunction") then
+                return createLobbyRemote:InvokeServer("enchanted_forest", "nightmare", Config.HardcoreMode or false)
+            else
+                createLobbyRemote:FireServer("enchanted_forest", "nightmare", Config.HardcoreMode or false)
+                return true
+            end
         end
+        return false
     end)
 
     if ok and (res == true or res == nil) then
@@ -1902,18 +1562,23 @@ local function mainCreateAndLaunch()
     end
 end
 
--- Staging Room Auto-Start
 local function triggerMainStartDungeon()
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
         local sBtn1 = pG:FindFirstChild("startButton") and pG.startButton:FindFirstChild("TextButton", true)
         if sBtn1 then
-            universalButtonClick(sBtn1)
+            pcall(function()
+                for _, c in ipairs(getconnections(sBtn1.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn1.MouseButton1Click)) do c:Fire() end
+            end)
         end
         local qG = pG:FindFirstChild("queueGui")
         local sBtn2 = qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true)
         if sBtn2 then
-            universalButtonClick(sBtn2)
+            pcall(function()
+                for _, c in ipairs(getconnections(sBtn2.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn2.MouseButton1Click)) do c:Fire() end
+            end)
         end
     end
 
@@ -1939,8 +1604,6 @@ task.spawn(function()
     end
 end)
 
-
-
 -- ========================================================================
 --  [MODULE 6] ACTIVE HIGHWAY SWARM ENGINE (BOTH MAIN & ALTS)
 -- ========================================================================
@@ -1964,7 +1627,6 @@ task.spawn(function()
             continue
         end
 
-        -- STRICT ISOLATION: IF IN MAIN LOBBY, DO NOT RUN COMBAT OR HIGHWAY MOVEMENT!
         if isMainLobby() or not isDungeon() then
             treeKilled = false
             golemKilled = false
@@ -1974,7 +1636,6 @@ task.spawn(function()
             continue
         end
 
-        -- In dungeon staging room: Check if all Alts are present before Main clicks start!
         if isMain then
             local altsReady, countPresent, totalCount = areAllAltsInDungeon()
             if altsReady then
@@ -2005,15 +1666,42 @@ task.spawn(function()
             local myPos = hrp.Position
             local now = os.clock()
 
-            -- Victory / Defeat / Replay Check (Gated so spawn is NEVER false-flagged)
-            local prog = getMatchProgress(currentWpIndex)
-            local activeBossModel = findBossOrTree(currentWpIndex, myPos)
-            local livingEnemiesList, _ = scanLivingEnemies(currentWpIndex)
-            local isDragonDeadInArena = (currentWpIndex >= 970 or myPos.X <= -1150.0) and (not activeBossModel) and (#livingEnemiesList == 0)
-
-            if (prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog == "defeat" or prog == "failed" or isDragonDeadInArena) and (currentWpIndex >= 800 or prog == "defeat" or prog == "failed") then
-                handleDungeonReplay(prog == "active" and "victory" or prog)
+            local prog = getMatchProgress()
+            if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "defeat" or prog == "failed" then
+                if prog == "defeat" or prog == "failed" then
+                    statusLbl.Text = "● STATUS: ⚠️ DEFEAT / TIMEOUT! Auto-Retrying..."
+                    statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
+                    infoLbl.Text = "🔄 Auto-Triggering Match Replay..."
+                else
+                    statusLbl.Text = "● STATUS: 🏆 VICTORY! Collecting Drops..."
+                    statusLbl.TextColor3 = Color3.fromRGB(100, 255, 120)
+                    executeSafeAutoSell()
+                end
                 task.wait(1.0)
+
+                if isMain then
+                    if replayRemote then pcall(function() replayRemote:FireServer() end) end
+                end
+                if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+
+                local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                if pg then
+                    for _, btn in ipairs(pg:GetDescendants()) do
+                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                            local bName = btn.Name:lower()
+                            local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                            if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready")
+                                or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") then
+                                pcall(function()
+                                    for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                    for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                end)
+                            end
+                        end
+                    end
+                end
+
+                task.wait(1.5)
                 currentWpIndex = 1
                 treeKilled = false
                 golemKilled = false
@@ -2021,29 +1709,22 @@ task.spawn(function()
                 continue
             end
 
-            -- Slot Tools & Cooldowns
             local qTool, eTool = getAbilityTools()
             local qCd = getToolCooldown(qTool)
             local eCd = getToolCooldown(eTool)
             local qReady = (qTool ~= nil) and (qCd <= 0.08) and ((now - lastQTime) >= 0.8)
             local eReady = (eTool ~= nil) and (eCd <= 0.08) and ((now - lastETime) >= 0.5)
 
-            -- ====================================================
-            --  [PRIORITY 0] PERSISTENT ANCIENT TREE & SUB-BOSS RADAR (BYPASSES HIGHWAY ANCHORS)
-            -- ====================================================
-            local bossModel, bossHum, bossRoot, isTreeChasmBoss = findBossOrTree(currentWpIndex, myPos)
+            local bossModel, bossHum, bossRoot, isTreeChasmBoss = findBossOrTree()
             if bossModel and bossHum and bossRoot and bossHum.Health > 0 then
                 local bossPos = bossRoot.Position
                 local distToBoss = (myPos - bossPos).Magnitude
 
                 if isTreeChasmBoss then
-                    -- 2ND SUB-BOSS (ANCIENT ENCHANTED TREE):
-                    -- If within 500 studs, bypass waypoint anchors completely and rush directly to platform edge!
                     local TREE_PLATFORM_EDGE = Vector3.new(-694.30, -20.97, 456.99)
                     local maxTreeStrikeDist = 115.0
 
                     if distToBoss <= maxTreeStrikeDist then
-                        -- At Platform Edge (<= 115s): STOP MOVEMENT, Lock Aim, and Melt with Q+E!
                         hum:MoveTo(myPos)
                         local lookDir = Vector3.new(bossPos.X - myPos.X, 0, bossPos.Z - myPos.Z).Unit
                         hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
@@ -2054,7 +1735,7 @@ task.spawn(function()
                         targetLbl.Text = string.format("🎯 Tree: %s (Dist: %.1fs)", bossModel.Name, distToBoss)
                         infoLbl.Text = "⚡ Holding Platform Edge (Tree Priority Lock)"
 
-                        currentWpIndex = 701 -- Ready to proceed to Room 6 once tree is dead
+                        currentWpIndex = 701
 
                         if qReady then
                             lastQTime = now
@@ -2068,7 +1749,6 @@ task.spawn(function()
                         task.wait(0.02)
                         continue
                     elseif distToBoss <= 500.0 then
-                        -- Within 500 studs: Ignore waypoint anchors, rush directly to platform edge!
                         statusLbl.Text = string.format("● STATUS: 🏃 RUSHING TO TREE PLATFORM (%.1fs)", distToBoss)
                         statusLbl.TextColor3 = Color3.fromRGB(255, 180, 80)
                         infoLbl.Text = "🌲 Bypassing Waypoints -> Moving to Platform Edge"
@@ -2078,22 +1758,17 @@ task.spawn(function()
                         continue
                     end
                 else
-                    -- GROUND BOSSES (Crystal Golem & Enchanted Forest Dragon):
                     local n = bossModel.Name:lower()
                     local isDragon = (n:find("dragon") ~= nil)
 
                     if isDragon then
-                        -- MAIN BOSS (ENCHANTED FOREST DRAGON) DEDICATED NAVIGATOR:
-                        -- 1. Pre-cast Q (+80% damage & speed) when within 130 studs of Dragon
                         if distToBoss <= 130.0 and qReady then
                             lastQTime = now
                             castSlot("q", qTool)
                         end
 
-                        -- 2. Check if party is physically standing on the Arena Platform (WP >= 980 or X <= -1180)
                         local isInsideArena = (currentWpIndex >= 980) or (myPos.X <= -1180.0)
                         if isInsideArena and distToBoss <= 85.0 then
-                            -- INSIDE ARENA PLATFORM: Lock aim & Melt Dragon with continuous Q+E!
                             hum:MoveTo(myPos)
                             local lookDir = Vector3.new(bossPos.X - myPos.X, 0, bossPos.Z - myPos.Z).Unit
                             hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
@@ -2109,7 +1784,6 @@ task.spawn(function()
                             task.wait(0.02)
                             continue
                         else
-                            -- RUSHING UP HIGHWAY INTO DRAGON ARENA:
                             local targetPoint = waypoints[currentWpIndex] or waypoints[#waypoints]
                             local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
                             local distToWp = (myPos - targetPos).Magnitude
@@ -2123,7 +1797,6 @@ task.spawn(function()
                                 currentWpIndex = currentWpIndex + 1
                             end
 
-                            -- Drive-by burst on any corridor/stairs mobs on the way:
                             local enemies, _ = scanLivingEnemies(currentWpIndex)
                             local targetGroup = getTargetGroup(enemies, myPos)
                             if targetGroup and targetGroup.nearestDist <= 85.0 and eReady then
@@ -2135,7 +1808,6 @@ task.spawn(function()
                             continue
                         end
                     else
-                        -- 1ST SUB-BOSS (CRYSTAL GOLEM):
                         local qTriggerDist = 115.0
                         local eTriggerDist = 85.0
 
@@ -2177,7 +1849,6 @@ task.spawn(function()
                     end
                 end
             else
-                -- MILESTONE CHECK: If Tree was engaged/killed, snap currentWpIndex to Room 6 exit corridor!
                 if not treeKilled and currentWpIndex >= 680 then
                     treeKilled = true
                     minWpFloor = math.max(minWpFloor, 745)
@@ -2188,7 +1859,6 @@ task.spawn(function()
                 end
             end
 
-            -- Ensure waypoint index respects active room milestone floor:
             if currentWpIndex < minWpFloor then
                 currentWpIndex = minWpFloor
             end
@@ -2197,7 +1867,6 @@ task.spawn(function()
             local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
             local distToWp = (myPos - targetPos).Magnitude
 
-            -- Checkpoint / Respawn Recovery (Safe Floor-Restricted Scan)
             if distToWp > 18.0 or (lastPosBeforeTick and (myPos - lastPosBeforeTick).Magnitude >= 25.0) then
                 local closestIdx, cDist = findClosestWaypointIndex(myPos, waypoints, minWpFloor)
                 if closestIdx ~= currentWpIndex then
@@ -2219,7 +1888,6 @@ task.spawn(function()
                 local groupCenter = targetGroup.center
                 local lookDir = Vector3.new(groupCenter.X - myPos.X, 0, groupCenter.Z - myPos.Z).Unit
 
-                -- CRITICAL BOSS OVERRIDE: If targetGroup is a Boss / Sub-Boss (e.g. Dragon, Tree, Golem), NEVER WAIT FOR GANG!
                 local isBoss, isTreeChasm = isBossTarget(targetGroup.frontMob.model, targetGroup.frontMob.hum, targetGroup.frontMob.root)
                 if isBoss or targetGroup.isBoss then
                     if isTreeChasm then
@@ -2251,12 +1919,11 @@ task.spawn(function()
                         task.wait(0.02)
                         continue
                     else
-                        -- Ground Bosses (Crystal Golem & Enchanted Forest Dragon)
                         local n = targetGroup.frontMob.model.Name:lower()
                         local isDragon = (n:find("dragon") ~= nil)
 
                         if isDragon and currentWpIndex < 980 then
-                            -- Still on stairs/corridor: Do NOT stop for Dragon, advance highway into arena
+                            -- Advance into arena
                         else
                             local qTriggerDist = isDragon and 130.0 or 115.0
                             local eTriggerDist = 85.0
@@ -2298,7 +1965,6 @@ task.spawn(function()
                     end
                 end
 
-                -- NORMAL MOB LOGIC (105-STUD ASSEMBLY + CD CHECK -> 85-STUD FARTHEST-MOB 1-CYCLE BARRAGE)
                 local farthestMob = targetGroup.farthestEnemy or targetGroup.frontMob
                 local isPreBossPack = (currentWpIndex >= 745)
                 local assemblyDistThreshold = isPreBossPack and 95.0 or 105.0
@@ -2308,7 +1974,6 @@ task.spawn(function()
                 targetLbl.Text = string.format("🎯 Group: %s (%d mobs)%s", targetGroup.frontMob.model.Name, targetGroup.count, isPreBossPack and " [Pre-Boss]" or "")
                 infoLbl.Text = string.format("👥 Swarm: %d mobs ahead | Dist: %.1fs (%s)", targetGroup.count, assemblyDistMetric, isPreBossPack and "Front (Anti-Aggro)" or "Back")
 
-                -- 1. SWARM ASSEMBLY & ABILITY COOLDOWN GATE (95s for Pre-Boss, 105s for Normal Rooms):
                 local isGangReady, assembledCount, livingCount, totalGang = checkGangReadiness(myPos, anchorMobPos, 8.0, assemblyDistThreshold)
                 local isAbilityReady = (eTool == nil) or eReady
 
@@ -2320,7 +1985,6 @@ task.spawn(function()
 
                     local holdDuration = now - assemblyHoldStartTime
                     if not isGangReady and holdDuration >= 2.0 then
-                        -- Timeout fail-safe: 2.0s passed waiting for gang -> Force push forward so party never stalls!
                         isGangReady = true
                     end
                 else
@@ -2328,11 +1992,7 @@ task.spawn(function()
                     assemblyHoldStartTime = 0
                 end
 
-                local holdDuration = now - assemblyHoldStartTime
-                local isHoldTimedOut = (holdDuration >= 2.5)
-
-                if assemblyDistMetric <= assemblyDistThreshold and (not isGangReady or not isAbilityReady) and not isHoldTimedOut then
-                    -- Hold position at assembly line until ALL accounts arrive 1:1 AND abilities are off cooldown!
+                if assemblyDistMetric <= assemblyDistThreshold and (not isGangReady or not isAbilityReady) then
                     hum:MoveTo(myPos)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
 
@@ -2347,7 +2007,6 @@ task.spawn(function()
                         infoLbl.Text = string.format("All %d gathered! Waiting %.1fs for 1-cycle E burst...", totalGang, remainingCd)
                     end
 
-                    -- Pre-cast Q (+80% damage & speed buff) while holding the line
                     if qReady then
                         lastQTime = now
                         castSlot("q", qTool)
@@ -2356,13 +2015,11 @@ task.spawn(function()
                     continue
                 end
 
-                -- 2. ONCE ASSEMBLED & ABILITIES OFF COOLDOWN: POP Q AT <= ASSEMBLY THRESHOLD
                 if assemblyDistMetric <= assemblyDistThreshold and qReady then
                     lastQTime = now
                     castSlot("q", qTool)
                 end
 
-                -- 3. UNLEASH E AT <= 85 STUDS FROM FARTHEST MOB (GUARANTEES 100% OF MOBS IN RANGE):
                 if farthestMobDist <= 85.0 and eReady then
                     statusLbl.Text = string.format("● STATUS: 💥 7X 100%% HIT BARRAGE (%d mobs)", targetGroup.count)
                     statusLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
@@ -2375,25 +2032,21 @@ task.spawn(function()
                     infoLbl.Text = string.format("🏃 Moving into 85s zone of farthest mob (Q Active)")
                 end
 
-                -- Continuous sprint forward along highway:
                 hum:MoveTo(targetPos)
                 if distToWp <= 4.0 then
                     currentWpIndex = currentWpIndex + 1
                 end
             else
-                -- FAST-FORWARD HIGHWAY SPRINT (SMOOTH SPEEDRUN ACCELERATION)
                 targetLbl.Text = "🎯 ENEMIES: CLEARED (Fast-Forward Sprinting)"
                 infoLbl.Text = "🛣️ Centerline Highway Speedrun (1-2 Stud Swarm Cluster)"
                 statusLbl.Text = "● STATUS: ⚡ FAST SPRINT"
                 statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
 
-                -- Instant Q pop off cooldown (0.8s) for maximum speed buff uptime!
                 if qReady and (now - lastQTime) >= 0.8 then
                     lastQTime = now
                     castSlot("q", qTool)
                 end
 
-                -- Look ahead 2 waypoints for smooth curve cutting & maximum velocity
                 local lookAheadIdx = math.min(currentWpIndex + 2, #waypoints)
                 local sprintTarget = waypoints[lookAheadIdx] or waypoints[currentWpIndex]
                 hum:MoveTo(Vector3.new(sprintTarget.x, sprintTarget.y, sprintTarget.z))
