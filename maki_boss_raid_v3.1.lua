@@ -3,12 +3,12 @@
 --  Dedicated High-Tier Boss Raid Leveling (Level 130 - 145+)
 --  
 --  CORE BOSS RAID MECHANICS:
---    1. Turbo Speed (40 WalkSpeed): Carry sprints at 40 WalkSpeed in Boss Raids for rapid boss positioning.
+--    1. Vanilla WalkSpeed: Movement driven naturally by Infinite Pulse Wave propulsion.
 --    2. Universal Auto-Ready: BOTH Carry and ALL Alts instantly click Ready / fire readyUp (0ms).
 --    3. Direct Boss Homing Navigation: No map recording needed! Carry finds the Boss and walks straight to it.
 --    4. Infinite Pulse Wave Elimination: Continuous Q/E spell rotation to burst the Boss down instantly.
 --    5. Highest Available Tier Selector: Automatically launches max unlocked tier (up to Tier 30).
---    6. True Zero-Latency Instant Auto-Accept: Pre-whitelisting + 0ms approval for all alts.
+--    6. Manual Join Request Approval: Popups remain on Carry screen for manual acceptance.
 --    7. "Next Tier" & Replay Engine: Clicks Next Tier for < Tier 30, and loops Tier 30 for max gold/XP.
 --    8. 100% Protected Loot & Auto-Sell: Collect armors, EF/NL weapons, & Legendaries completely safe.
 --    9. Universal Mobile & PC Persistence: Live In-GUI Main/Alts configuration saved to dqr_party_config.json.
@@ -863,62 +863,10 @@ if announceDropRemote then
 end
 
 -- ========================================================================
---  MODULE 4: TRUE ZERO-LATENCY INSTANT AUTO-ACCEPT ENGINE (0ms APPROVAL)
+--  MODULE 4: MANUAL JOIN REQUEST APPROVAL & ALT JOIN ENGINE
 -- ========================================================================
-local function instantApproveAndDismissPopup(gui)
-    if not gui then return end
-    local gName = gui.Name:lower()
-
-    if gName:find("joinrequest") or gName:find("confirm") then
-        local cBtn = gui:FindFirstChild("confirm", true) or gui:FindFirstChild("TextButton", true) or gui:FindFirstChild("button", true)
-        if cBtn and cBtn:IsA("GuiButton") then
-            pcall(function()
-                for _, c in ipairs(getconnections(cBtn.MouseButton1Click)) do c:Fire() end
-                for _, c in ipairs(getconnections(cBtn.MouseButton1Down)) do c:Fire() end
-                for _, c in ipairs(getconnections(cBtn.Activated)) do c:Fire() end
-            end)
-        end
-
-        if respondJoinRequestRemote then
-            for _, altName in ipairs(Config.AltUsernames) do
-                pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
-            end
-        end
-
-        pcall(function() gui:Destroy() end)
-    end
-end
-
-local pGuiRef = LocalPlayer:WaitForChild("PlayerGui")
-
-pGuiRef.DescendantAdded:Connect(function(desc)
-    if isCarry and Config.AutoAcceptJoins then
-        local dName = desc.Name:lower()
-        if dName:find("joinrequestconfirm") or dName == "joinrequest" then
-            instantApproveAndDismissPopup(desc)
-        end
-    end
-end)
-
-task.spawn(function()
-    while _G.MAKI_BOSS_RAID_RUNNING do
-        task.wait(0.05)
-        if isCarry and isRaidOrDungeon() and Config.AutoAcceptJoins then
-            for _, altName in ipairs(Config.AltUsernames) do
-                if not Players:FindFirstChild(altName) then
-                    if respondJoinRequestRemote then
-                        pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
-                    end
-                end
-            end
-            for _, c in ipairs(pGuiRef:GetChildren()) do
-                if c.Name:lower():find("joinrequest") then
-                    instantApproveAndDismissPopup(c)
-                end
-            end
-        end
-    end
-end)
+-- Carry auto-accept and popup interception removed per configuration so
+-- join request dialogs stay on screen for manual approval.
 
 task.spawn(function()
     while _G.MAKI_BOSS_RAID_RUNNING do
