@@ -540,24 +540,34 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  DIRECT BOSS HOMING & ELIMINATION ENGINE
+--  DIRECT BOSS HOMING & CONTINUOUS FORWARD ADVANCE ENGINE
 -- ========================================================================
 local function findBossTarget()
-    local dungeon = Workspace:FindFirstChild("dungeon") or Workspace
-    for _, obj in ipairs(dungeon:GetDescendants()) do
-        if obj:IsA("Model") then
-            local hum = obj:FindFirstChildOfClass("Humanoid")
-            local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChild("Torso")
-            if hum and hrp and hum.Health > 0 then
-                local isPlayer = false
-                for _, p in ipairs(Players:GetPlayers()) do
-                    if p.Character == obj or p.Name == obj.Name then
-                        isPlayer = true
-                        break
+    local containers = {
+        Workspace:FindFirstChild("enemies"),
+        Workspace:FindFirstChild("boss"),
+        Workspace:FindFirstChild("dungeon"),
+        Workspace
+    }
+
+    for _, container in ipairs(containers) do
+        if container then
+            for _, obj in ipairs(container:GetDescendants()) do
+                if obj:IsA("Model") and obj ~= LocalPlayer.Character then
+                    local hum = obj:FindFirstChildOfClass("Humanoid")
+                    local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChild("Torso") or obj.PrimaryPart
+                    if hum and hrp and hum.Health > 0 then
+                        local isPlayer = false
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p.Character == obj or p.Name == obj.Name then
+                                isPlayer = true
+                                break
+                            end
+                        end
+                        if not isPlayer then
+                            return obj, hrp, hum
+                        end
                     end
-                end
-                if not isPlayer then
-                    return obj, hrp, hum
                 end
             end
         end
@@ -565,9 +575,31 @@ local function findBossTarget()
     return nil, nil, nil
 end
 
+-- Continuous Arena Wall/Barrier Bypass
 task.spawn(function()
     while _G.MAKI_BOSS_RAID_RUNNING do
-        task.wait(0.05)
+        if isCarry and isRaidOrDungeon() then
+            local dungeon = Workspace:FindFirstChild("dungeon") or Workspace
+            for _, desc in ipairs(dungeon:GetDescendants()) do
+                if desc:IsA("BasePart") then
+                    local pName = desc.Name:lower()
+                    local parName = desc.Parent and desc.Parent.Name:lower() or ""
+                    if pName:find("door") or pName:find("gate") or pName:find("barrier") or pName:find("blocker") or parName:find("doors") or parName:find("gates") or desc.Transparency >= 0.8 then
+                        if not pName:find("floor") and not pName:find("ground") and not pName:find("step") and not pName:find("stair") then
+                            desc.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(1.5)
+    end
+end)
+
+-- Continuous Boss Chasing & Movement Drive
+task.spawn(function()
+    while _G.MAKI_BOSS_RAID_RUNNING do
+        task.wait(0.03)
         if isCarry and isRaidOrDungeon() then
             local prog = getMatchProgress()
             if prog ~= "bosskilled" and prog ~= "victory" and prog ~= "complete" and prog ~= "playersnotready" then
@@ -578,7 +610,25 @@ task.spawn(function()
                 if myHrp and myHum and myHum.Health > 0 then
                     local bossModel, bossHrp, bossHum = findBossTarget()
                     if bossHrp and bossHum and bossHum.Health > 0 then
-                        myHum:MoveTo(bossHrp.Position)
+                        local myPos = myHrp.Position
+                        local bossPos = bossHrp.Position
+                        local toBoss = (bossPos - myPos)
+                        local dist = toBoss.Magnitude
+
+                        -- Continuously look at boss
+                        local flatLook = Vector3.new(toBoss.X, 0, toBoss.Z)
+                        if flatLook.Magnitude > 0.1 then
+                            myHrp.CFrame = CFrame.lookAt(myPos, myPos + flatLook.Unit)
+                        end
+
+                        -- Continuously drive character forward towards boss
+                        if dist > 4.0 then
+                            local walkDir = flatLook.Unit
+                            myHum:Move(walkDir, false)
+                            myHum:MoveTo(bossPos)
+                        else
+                            myHum:Move(Vector3.zero, false)
+                        end
                     end
                 end
             end
