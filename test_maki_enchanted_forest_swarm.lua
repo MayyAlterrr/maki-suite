@@ -219,19 +219,72 @@ local function isDungeon()
     return not isMainLobby()
 end
 
+-- ========================================================================
+--  UNIVERSAL MOBILE (DELTA/ANDROID) & DESKTOP GUI BUTTON CLICKER
+-- ========================================================================
+local function universalButtonClick(btn)
+    if not btn then return end
+
+    -- 1. firesignal (Mobile executors: Delta, Fluxus, Codex, Hydrogen)
+    if typeof(firesignal) == "function" then
+        pcall(function() firesignal(btn.Activated) end)
+        pcall(function() firesignal(btn.MouseButton1Click) end)
+        pcall(function() firesignal(btn.MouseButton1Down) end)
+        pcall(function() firesignal(btn.MouseButton1Up) end)
+    end
+
+    -- 2. getconnections (Desktop & standard executor environments)
+    if typeof(getconnections) == "function" then
+        pcall(function()
+            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+        end)
+    end
+
+    -- 3. VirtualInputManager Screen Tap (Hardware simulation on mobile / cloud phones)
+    pcall(function()
+        if VirtualInputManager and btn.AbsolutePosition and btn.AbsoluteSize then
+            local x = btn.AbsolutePosition.X + (btn.AbsoluteSize.X / 2)
+            local y = btn.AbsolutePosition.Y + (btn.AbsoluteSize.Y / 2) + 36
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+            task.wait(0.02)
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+        end
+    end)
+end
+
 local function getMatchProgress()
     local dProg = Workspace:FindFirstChild("dungeonProgress")
     if dProg and dProg:IsA("StringValue") then
         local v = dProg.Value:lower()
-        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("defeat") or v:find("failed") or v:find("loss") then
+        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("dungeoncomplete") or v:find("defeat") or v:find("failed") or v:find("loss") or v:find("won") or v:find("win") or v:find("cleared") or v:find("rewards") or v:find("finished") then
             return v
+        end
+    end
+
+    local dungeon = Workspace:FindFirstChild("dungeon")
+    if dungeon then
+        for _, valName in ipairs({"dungeonFinished", "finished", "isFinished", "isComplete", "complete"}) do
+            local val = dungeon:FindFirstChild(valName)
+            if val and val:IsA("BoolValue") and val.Value == true then
+                return "victory"
+            end
+        end
+        local bossRoom = dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room") or dungeon:FindFirstChild("Room7") or dungeon:FindFirstChild("Room8")
+        if bossRoom then
+            for _, valName in ipairs({"dungeonFinished", "finished", "isFinished"}) do
+                local val = bossRoom:FindFirstChild(valName)
+                if val and val:IsA("BoolValue") and val.Value == true then
+                    return "victory"
+                end
+            end
         end
     end
 
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     if pg then
-        -- Check EndGame / Victory / Defeat Screen
-        for _, gName in ipairs({"EndGameGui", "endGameGui", "defeatGui", "victoryGui", "matchEndGui", "rewardsGui", "resultGui", "gameFinishedGui"}) do
+        for _, gName in ipairs({"EndGameGui", "endGameGui", "defeatGui", "victoryGui", "matchEndGui", "rewardsGui", "resultGui", "gameFinishedGui", "dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "ReplayDungeonButton"}) do
             local g = pg:FindFirstChild(gName)
             if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
                 local txt = ""
@@ -242,7 +295,7 @@ local function getMatchProgress()
                 end
                 if txt:find("defeat") or txt:find("failed") or txt:find("time up") or txt:find("out of time") or txt:find("game over") then
                     return "defeat"
-                elseif txt:find("victory") or txt:find("completed") or txt:find("clear") or txt:find("rewards") then
+                elseif txt:find("victory") or txt:find("completed") or txt:find("clear") or txt:find("rewards") or txt:find("won") or txt:find("finished") then
                     return "victory"
                 end
                 return "victory"
@@ -251,6 +304,73 @@ local function getMatchProgress()
     end
 
     return "active"
+end
+
+-- ========================================================================
+--  [MODULE 5.8] INFINITE AUTO-RETRY / REPLAY ENGINE (MOBILE & DESKTOP)
+-- ========================================================================
+local isProcessingReplay = false
+local function handleDungeonReplay(prog)
+    if isProcessingReplay then return end
+    isProcessingReplay = true
+
+    task.spawn(function()
+        local isDefeat = (prog == "defeat" or prog == "failed" or prog == "loss")
+        if isDefeat then
+            statusLbl.Text = "● STATUS: ⚠️ DEFEAT / TIMEOUT! Auto-Retrying..."
+            statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
+            infoLbl.Text = "🔄 Auto-Triggering Match Replay..."
+        else
+            statusLbl.Text = "● STATUS: 🏆 VICTORY! Collecting Drops & Replaying..."
+            statusLbl.TextColor3 = Color3.fromRGB(100, 255, 120)
+            infoLbl.Text = "⚡ Replaying Enchanted Forest..."
+            executeSafeAutoSell()
+        end
+
+        local startTime = os.clock()
+        while _G.MAKI_EF_SWARM_RUNNING and isDungeon() and (os.clock() - startTime < 12.0) do
+            -- 1. Fire Replay / Ready Remotes on Main & Alts
+            if isMain then
+                if replayRemote then
+                    pcall(function() replayRemote:FireServer() end)
+                    pcall(function() replayRemote:FireServer(Config.HardcoreMode or false) end)
+                    pcall(function() replayRemote:FireServer({ isHardcore = Config.HardcoreMode or false, hardcore = Config.HardcoreMode or false }) end)
+                end
+            end
+            if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+            if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
+
+            -- 2. Click any visible Replay / Retry / Ready Buttons on Screen (Mobile + Desktop)
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            if pg then
+                for _, btn in ipairs(pg:GetDescendants()) do
+                    if btn:IsA("GuiButton") then
+                        local bName = btn.Name:lower()
+                        local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                        if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready") or bName:find("playagain") or bName:find("again")
+                            or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") or bText:find("play again") or bText:find("again") then
+                            universalButtonClick(btn)
+                        end
+                    end
+                end
+            end
+
+            task.wait(0.35)
+        end
+
+        -- 3. 12-Second Failsafe: Return to Lobby if match failed to reload in-place
+        if isDungeon() and _G.MAKI_EF_SWARM_RUNNING then
+            local pNow = getMatchProgress()
+            if pNow ~= "active" then
+                print("[Maki Replay] 🔄 Replay timed out after 12s, returning to Main Lobby to re-host...")
+                if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
+                task.wait(0.5)
+                pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
+            end
+        end
+
+        isProcessingReplay = false
+    end)
 end
 
 local stuckLoadingSeconds = 0
@@ -1625,10 +1745,7 @@ local function instantAcceptAndDestroyPopup(gui)
         or gui:FindFirstChild("Yes", true)
 
     if confirmBtn then
-        pcall(function()
-            for _, c in ipairs(getconnections(confirmBtn.Activated)) do c:Fire() end
-            for _, c in ipairs(getconnections(confirmBtn.MouseButton1Click)) do c:Fire() end
-        end)
+        universalButtonClick(confirmBtn)
     end
 
     -- Extract requester name from prompt label if present
@@ -1782,18 +1899,12 @@ local function triggerMainStartDungeon()
     if pG then
         local sBtn1 = pG:FindFirstChild("startButton") and pG.startButton:FindFirstChild("TextButton", true)
         if sBtn1 then
-            pcall(function()
-                for _, c in ipairs(getconnections(sBtn1.Activated)) do c:Fire() end
-                for _, c in ipairs(getconnections(sBtn1.MouseButton1Click)) do c:Fire() end
-            end)
+            universalButtonClick(sBtn1)
         end
         local qG = pG:FindFirstChild("queueGui")
         local sBtn2 = qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true)
         if sBtn2 then
-            pcall(function()
-                for _, c in ipairs(getconnections(sBtn2.Activated)) do c:Fire() end
-                for _, c in ipairs(getconnections(sBtn2.MouseButton1Click)) do c:Fire() end
-            end)
+            universalButtonClick(sBtn2)
         end
     end
 
@@ -1883,45 +1994,15 @@ task.spawn(function()
             local myPos = hrp.Position
             local now = os.clock()
 
-            -- Victory / Defeat / Replay Check
+            -- Victory / Defeat / Replay Check & Arena Dragon Death Milestone
             local prog = getMatchProgress()
-            if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "defeat" or prog == "failed" then
-                if prog == "defeat" or prog == "failed" then
-                    statusLbl.Text = "● STATUS: ⚠️ DEFEAT / TIMEOUT! Auto-Retrying..."
-                    statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
-                    infoLbl.Text = "🔄 Auto-Triggering Match Replay..."
-                else
-                    statusLbl.Text = "● STATUS: 🏆 VICTORY! Collecting Drops..."
-                    statusLbl.TextColor3 = Color3.fromRGB(100, 255, 120)
-                    executeSafeAutoSell()
-                end
-                task.wait(1.0)
+            local activeBossModel = findBossOrTree()
+            local livingEnemiesList, _ = scanLivingEnemies(currentWpIndex)
+            local isDragonDeadInArena = (currentWpIndex >= 970 or myPos.X <= -1150.0) and (not activeBossModel) and (#livingEnemiesList == 0)
 
-                -- 1. Fire Replay / Retry Remotes
-                if isMain then
-                    if replayRemote then pcall(function() replayRemote:FireServer() end) end
-                end
-                if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
-
-                -- 2. Click any visible Replay / Retry / Ready Buttons on Screen
-                local pg = LocalPlayer:FindFirstChild("PlayerGui")
-                if pg then
-                    for _, btn in ipairs(pg:GetDescendants()) do
-                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
-                            local bName = btn.Name:lower()
-                            local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
-                            if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready")
-                                or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") then
-                                pcall(function()
-                                    for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                                    for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-                                end)
-                            end
-                        end
-                    end
-                end
-
-                task.wait(1.5)
+            if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog == "defeat" or prog == "failed" or isDragonDeadInArena then
+                handleDungeonReplay(prog == "active" and "victory" or prog)
+                task.wait(0.5)
                 currentWpIndex = 1
                 treeKilled = false
                 golemKilled = false
