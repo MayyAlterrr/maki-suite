@@ -500,6 +500,11 @@ end
 local function executeInstantReadyUp()
     if not Config.AutoReadyUp or not isRaidOrDungeon() then return end
 
+    -- If Carry, DO NOT ready up until ALL configured alts are inside the raid room with loaded characters!
+    if isCarry and not areAllAltsPresent() then
+        return
+    end
+
     if readyUpRemote then
         pcall(function() readyUpRemote:FireServer() end)
     end
@@ -602,7 +607,8 @@ task.spawn(function()
         task.wait(0.03)
         if isCarry and isRaidOrDungeon() then
             local prog = getMatchProgress()
-            if prog ~= "bosskilled" and prog ~= "victory" and prog ~= "complete" and prog ~= "playersnotready" then
+            local altsIn = areAllAltsPresent()
+            if altsIn and prog ~= "bosskilled" and prog ~= "victory" and prog ~= "complete" and prog ~= "playersnotready" then
                 local myChar = LocalPlayer.Character
                 local myHrp  = myChar and myChar:FindFirstChild("HumanoidRootPart")
                 local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -976,9 +982,16 @@ local function carryCreateAndLaunchBossRaid()
 end
 
 local function areAllAltsPresent()
-    if #Config.AltUsernames == 0 then return true end
+    if not Config.AltUsernames or #Config.AltUsernames == 0 then return true end
     for _, altName in ipairs(Config.AltUsernames) do
-        if not Players:FindFirstChild(altName) then
+        local p = Players:FindFirstChild(altName)
+        if not p then
+            return false
+        end
+        local char = p.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not char or not hrp or not hum then
             return false
         end
     end
@@ -1095,9 +1108,15 @@ task.spawn(function()
             if isCarry and not isStagingStarted then
                 local altsReady = areAllAltsPresent()
                 if altsReady then
-                    print("[Maki Boss Staging] 👥 All Alts present in Raid Staging Room! Starting Boss Encounter & Readying Up...")
+                    print("[Maki Boss Staging] 👥 100% of Alts loaded in Raid Room! Starting Boss Encounter & Readying Up...")
                     isStagingStarted = true
                     triggerCarryStartBossRaid()
+                else
+                    local count = 0
+                    for _, altName in ipairs(Config.AltUsernames) do
+                        if Players:FindFirstChild(altName) and Players[altName].Character then count = count + 1 end
+                    end
+                    print(string.format("[Maki Boss Staging ⏳] Waiting for Alts to load into Raid Room (%d/%d loaded)...", count, #Config.AltUsernames))
                 end
             elseif not isCarry then
                 if not altSpawnPosition then
