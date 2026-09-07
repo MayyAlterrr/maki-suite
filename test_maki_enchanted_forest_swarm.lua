@@ -1056,7 +1056,7 @@ local function isBossTarget(desc, hum, root)
     return true, isTreeChasm
 end
 
-local function findBossOrTree()
+local function findBossOrTree(currentWp, myPos)
     local checked = {}
 
     local function inspectObj(desc)
@@ -1072,6 +1072,11 @@ local function findBossOrTree()
         if hum and hum.Health > 0 and root then
             local isBoss, isTreeChasm = isBossTarget(desc, hum, root)
             if isBoss then
+                local n = desc.Name:lower()
+                -- PERMANENT FIX: Do NOT premature-lock Dragon while still clearing Room 6 / corridor (WP < 970)
+                if n:find("dragon") and (currentWp and currentWp < 970) and (myPos and myPos.X > -1150.0) then
+                    return nil
+                end
                 return desc, hum, root, isTreeChasm
             end
         end
@@ -2041,7 +2046,7 @@ task.spawn(function()
 
             -- Victory / Defeat / Replay Check & Arena Dragon Death Milestone
             local prog = getMatchProgress()
-            local activeBossModel = findBossOrTree()
+            local activeBossModel = findBossOrTree(currentWpIndex, myPos)
             local livingEnemiesList, _ = scanLivingEnemies(currentWpIndex)
             local isDragonDeadInArena = (currentWpIndex >= 970 or myPos.X <= -1150.0) and (not activeBossModel) and (#livingEnemiesList == 0)
 
@@ -2065,7 +2070,7 @@ task.spawn(function()
             -- ====================================================
             --  [PRIORITY 0] PERSISTENT ANCIENT TREE & SUB-BOSS RADAR (BYPASSES HIGHWAY ANCHORS)
             -- ====================================================
-            local bossModel, bossHum, bossRoot, isTreeChasmBoss = findBossOrTree()
+            local bossModel, bossHum, bossRoot, isTreeChasmBoss = findBossOrTree(currentWpIndex, myPos)
             if bossModel and bossHum and bossRoot and bossHum.Health > 0 then
                 local bossPos = bossRoot.Position
                 local distToBoss = (myPos - bossPos).Magnitude
@@ -2362,7 +2367,10 @@ task.spawn(function()
                     assemblyHoldStartTime = 0
                 end
 
-                if assemblyDistMetric <= assemblyDistThreshold and (not isGangReady or not isAbilityReady) then
+                local holdDuration = now - assemblyHoldStartTime
+                local isHoldTimedOut = (holdDuration >= 2.5)
+
+                if assemblyDistMetric <= assemblyDistThreshold and (not isGangReady or not isAbilityReady) and not isHoldTimedOut then
                     -- Hold position at assembly line until ALL accounts arrive 1:1 AND abilities are off cooldown!
                     hum:MoveTo(myPos)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
