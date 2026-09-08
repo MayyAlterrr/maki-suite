@@ -1076,6 +1076,42 @@ local function mainCreateAndLaunch()
     end
 end
 
+local altLobbyExitTriggered = false
+
+local function exitAltToMainLobby()
+    if altLobbyExitTriggered then return end
+    altLobbyExitTriggered = true
+    print("[Maki Alt 🚪] 👑 Main left dungeon! Returning Alt to Main Lobby...")
+
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    local retBtn = pG and (pG:FindFirstChild("ReturnToLobbyButton", true) or pG:FindFirstChild("leaveDungeon", true) or pG:FindFirstChild("leaveButton", true))
+    if retBtn then
+        pcall(function()
+            for _, c in ipairs(getconnections(retBtn.Activated)) do c:Fire() end
+            for _, c in ipairs(getconnections(retBtn.MouseButton1Click)) do c:Fire() end
+        end)
+    end
+
+    if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
+    local rLobby = remotes and (remotes:FindFirstChild("ReturnToLobbyEvent") or remotes:FindFirstChild("teleToLobby") or remotes:FindFirstChild("leaveGame"))
+    if rLobby then pcall(function() rLobby:FireServer() end) end
+
+    task.wait(1.5)
+    pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
+end
+
+-- Listener: If Main leaves the server/dungeon, immediately trigger Alt lobby exit
+Players.PlayerRemoving:Connect(function(player)
+    if not isMain and isDungeon() then
+        if Config.CarryUsername and #Config.CarryUsername > 0 then
+            if player.Name:lower() == Config.CarryUsername:lower() then
+                print(string.format("[Maki Alt 🚪] Main '%s' left the dungeon! Exiting Alt to Main Lobby...", player.Name))
+                exitAltToMainLobby()
+            end
+        end
+    end
+end)
+
 local function areAllAltsInDungeon()
     loadConfig()
     local altList = Config.AltUsernames or {}
@@ -1278,10 +1314,11 @@ task.spawn(function()
     end
 end)
 
--- Alt Auto-Join in Lobby
+-- Alt Auto-Join & Main Departure Watcher
 task.spawn(function()
     while _G.MAKI_EF_COMBINE_RUNNING do
         if not isMain and isMainLobby() then
+            altLobbyExitTriggered = false
             pcall(function()
                 local mainName = Config.CarryUsername or ""
                 if #mainName > 0 then
@@ -1289,6 +1326,18 @@ task.spawn(function()
                     if joinDungeonRemote then joinDungeonRemote:InvokeServer(mainName) end
                 end
             end)
+        elseif not isMain and isDungeon() and not altLobbyExitTriggered then
+            if Config.CarryUsername and #Config.CarryUsername > 0 then
+                local mainInServer = Players:FindFirstChild(Config.CarryUsername)
+                if not mainInServer then
+                    -- Debounce verification check
+                    task.wait(2.0)
+                    if not isMain and isDungeon() and not Players:FindFirstChild(Config.CarryUsername) then
+                        print(string.format("[Maki Alt 🚪] Main '%s' no longer in dungeon! Exiting Alt to Main Lobby...", Config.CarryUsername))
+                        exitAltToMainLobby()
+                    end
+                end
+            end
         end
         task.wait(0.5)
     end
