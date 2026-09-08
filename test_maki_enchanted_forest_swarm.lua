@@ -1414,6 +1414,16 @@ task.spawn(function()
     end
 end)
 
+local function isInsidePreBossZone(myPos, currentWp, treeDead)
+    if not treeDead or currentWp < 800 or currentWp > 960 then
+        return false
+    end
+    if myPos.X <= -840.0 and myPos.X >= -1130.0 and myPos.Z >= 535.0 and myPos.Z <= 675.0 and myPos.Y <= 4.0 then
+        return true
+    end
+    return false
+end
+
 -- ========================================================================
 --  [CORE ENGINE] EF-COMBINE 145-174 MHC HIGHWAY COMBAT LOOP
 -- ========================================================================
@@ -1430,8 +1440,7 @@ task.spawn(function()
     local lastSpeedCheckPos = nil
     local lastSpeedCheckTime = os.clock()
     local currentMoveSpeed = 0
-    local wp840StuckDuration = 0
-    local lastUnstuckActionTime = 0
+    local preBossStuckDuration = 0
 
     -- Alt Spawn Standby Variables
     local altSpawnOrigin = nil
@@ -1696,7 +1705,7 @@ task.spawn(function()
                 -- [SAFETY GUARD: 71s AGGRO THRESHOLD] If abilities are NOT ready, HOLD at safe distance (>= 78 studs)
                 -- Prevents any single mob in the pack from crossing the 71-stud chain aggro boundary!
                 if targetGroup.nearestDist <= 85.0 and not isSkillsReady then
-                    wp840StuckDuration = 0 -- Intentional Cooldown Hold: Zero watchdog interference!
+                    preBossStuckDuration = 0 -- Intentional Cooldown Hold: Zero watchdog interference!
                     hum:MoveTo(myPos)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
                     if qReady then
@@ -1740,6 +1749,7 @@ task.spawn(function()
                         castSlot("e", eTool)
                     else
                         -- Hold position safely at 82 studs while waiting for ability cooldown
+                        preBossStuckDuration = 0
                         statusLbl.Text = string.format("● STATUS: ⏳ WAITING FOR Q BUFF + E (Q: %.1fs | E: %.1fs)", qCd, eCd)
                         statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
                         infoLbl.Text = string.format("🛡️ Standing still at %.1fs until +80%% Q Buff & E ready", targetGroup.farthestDist)
@@ -1779,30 +1789,61 @@ task.spawn(function()
                     targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
                 end
 
-                -- Targeted WP 840 Corridor Anti-Stall Watchdog (Only engages in WP 825-865 corridor)
-                if currentIndex >= 825 and currentIndex <= 865 then
-                    if currentMoveSpeed < 2.0 then
-                        wp840StuckDuration = wp840StuckDuration + 0.02
-                        if wp840StuckDuration >= 1.5 and (now - lastUnstuckActionTime) >= 1.0 then
-                            lastUnstuckActionTime = now
-                            hum.Jump = true -- Jump over doorway/corner threshold
+                -- Pre-Boss Room Geometric Stall Watchdog (Instant Fast-Replay)
+                if isInsidePreBossZone(myPos, currentIndex, treeKilled) then
+                    if currentMoveSpeed < 2.5 then
+                        preBossStuckDuration = preBossStuckDuration + 0.02
+                        if preBossStuckDuration >= 2.5 then
+                            preBossStuckDuration = 0
+                            print(string.format("[%s ⚠️] Pre-Boss Stall Detected at WP %d (Speed: %.1f studs/s) -> Instantly Fast-Replaying Match!", LocalPlayer.Name, currentIndex, currentMoveSpeed))
+                            statusLbl.Text = "● STATUS: ⚠️ PRE-BOSS STALL DETECTED! Fast-Replaying..."
+                            statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
+                            infoLbl.Text = "🔄 Pre-Boss Room corner hang detected -> Instantly replaying..."
                             
-                            if wp840StuckDuration >= 2.2 then
-                                currentIndex = math.min(currentIndex + 3, #waypoints)
-                                targetPoint = waypoints[currentIndex]
-                                targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                                wp840StuckDuration = 0
-                                print(string.format("[%s ⚠️] WP 840 Anti-Stall: Jumped & Advanced Waypoint to %d", LocalPlayer.Name, currentIndex))
+                            task.spawn(executeSafeAutoSell)
+                            task.wait(0.3)
+                            
+                            if isMain then
+                                local data = { dungeonName = "Enchanted Forest", dungeonProgress = "bossKilled", hardcore = Config.HardcoreMode or false }
+                                if replayRemote then
+                                    pcall(function() replayRemote:FireServer() end)
+                                    pcall(function() replayRemote:FireServer(data) end)
+                                end
+                                if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                                triggerMainStartDungeon()
                             else
-                                local nudgeOffset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
-                                hum:MoveTo(targetPos + nudgeOffset)
+                                if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
                             end
+
+                            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                            if pg then
+                                for _, btn in ipairs(pg:GetDescendants()) do
+                                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                        local bName = btn.Name:lower()
+                                        local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                                        if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready")
+                                            or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") then
+                                            pcall(function()
+                                                for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                                for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+
+                            currentIndex = 1
+                            treeKilled = false
+                            minWpFloor = 1
+                            altSpawnOrigin = nil
+                            task.wait(1.5)
+                            continue
                         end
                     else
-                        wp840StuckDuration = 0
+                        preBossStuckDuration = 0
                     end
                 else
-                    wp840StuckDuration = 0
+                    preBossStuckDuration = 0
                 end
 
                 if distToWp <= 3.5 then
