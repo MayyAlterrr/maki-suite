@@ -1366,14 +1366,6 @@ task.spawn(function()
     end
 end)
 
-end
-                    end
-                end
-            end
-        end
-    end
-end)
-
 -- Lobby Supervisor Loop
 task.spawn(function()
     while _G.MAKI_EF_COMBINE_RUNNING do
