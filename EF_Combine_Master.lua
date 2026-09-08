@@ -1076,6 +1076,79 @@ local function mainCreateAndLaunch()
     end
 end
 
+local function areAllAltsInDungeon()
+    loadConfig()
+    local altList = Config.AltUsernames or {}
+    if #altList == 0 then
+        return true, 0, 0
+    end
+
+    local loadedCount = 0
+    for _, altName in ipairs(altList) do
+        local p = Players:FindFirstChild(altName)
+        if p then
+            local char = p.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                loadedCount = loadedCount + 1
+            end
+        end
+    end
+
+    return (loadedCount >= #altList), loadedCount, #altList
+end
+
+local function instantAcceptAndDestroyPopup(gui)
+    if not gui or gui.Name ~= "joinRequestConfirm" then return end
+    if not isMain or not Config.AutoAcceptJoins then return end
+
+    local cBtn = gui:FindFirstChild("confirm", true) and gui.confirm:FindFirstChild("TextButton", true)
+    if cBtn then
+        pcall(function()
+            for _, c in ipairs(getconnections(cBtn.MouseButton1Click)) do c:Fire() end
+            for _, c in ipairs(getconnections(cBtn.MouseButton1Down)) do c:Fire() end
+            for _, c in ipairs(getconnections(cBtn.Activated)) do c:Fire() end
+        end)
+    end
+
+    local pLbl = gui:FindFirstChild("prompt", true)
+    if pLbl and pLbl.Text and respondJoinRequestRemote then
+        for _, altName in ipairs(Config.AltUsernames or {}) do
+            if pLbl.Text:lower():find(altName:lower()) then
+                pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
+            end
+        end
+    end
+
+    pcall(function() gui:Destroy() end)
+end
+
+pGuiRef.ChildAdded:Connect(function(child)
+    if child.Name == "joinRequestConfirm" then
+        instantAcceptAndDestroyPopup(child)
+    end
+end)
+
+if showJoinRemote and respondJoinRequestRemote then
+    showJoinRemote.OnClientEvent:Connect(function(requesterName, ...)
+        if isMain and Config.AutoAcceptJoins then
+            local nameStr = tostring(requesterName)
+            pcall(function()
+                respondJoinRequestRemote:FireServer(nameStr, true)
+            end)
+            print(string.format("[Maki Host ⚡] Instantly Approved Alt: %s (0ms)!", nameStr))
+
+            task.spawn(function()
+                for _, c in ipairs(pGuiRef:GetChildren()) do
+                    if c.Name == "joinRequestConfirm" then
+                        instantAcceptAndDestroyPopup(c)
+                    end
+                end
+            end)
+        end
+    end)
+end
+
 local function triggerMainStartDungeon()
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
@@ -1112,33 +1185,73 @@ local function triggerMainStartDungeon()
     if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
 end
 
--- Staging Room Auto-Start Watcher Loop
+-- Staging Room Auto-Start & Alt Synchronization Watcher Loop
 task.spawn(function()
     while _G.MAKI_EF_COMBINE_RUNNING do
-        task.wait(0.5)
+        task.wait(0.3)
         if isDungeon() then
             local prog = getMatchProgress()
-            if prog == "active" or prog == "notstarted" or prog == "staging" or prog == "" then
-                local pG = LocalPlayer:FindFirstChild("PlayerGui")
-                local qG = pG and pG:FindFirstChild("queueGui")
-                local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
-                
-                if sBtn or qG then
-                    if isMain then
-                        local allAltsPresent = true
-                        if not Config.SoloCarryMode and Config.AltUsernames and #Config.AltUsernames > 0 then
+            local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "")
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local qG = pG and pG:FindFirstChild("queueGui")
+            local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
+
+            if isPreStart and (sBtn or qG) then
+                if isMain then
+                    -- Main: Fast-approve any pending join requests
+                    if Config.AutoAcceptJoins then
+                        for _, c in ipairs(pG:GetChildren()) do
+                            if c.Name == "joinRequestConfirm" then
+                                instantAcceptAndDestroyPopup(c)
+                            end
+                        end
+                        if respondJoinRequestRemote and Config.AltUsernames then
                             for _, altName in ipairs(Config.AltUsernames) do
                                 if not Players:FindFirstChild(altName) then
-                                    allAltsPresent = false
-                                    break
+                                    pcall(function()
+                                        respondJoinRequestRemote:FireServer(altName, true)
+                                    end)
                                 end
                             end
                         end
-                        if allAltsPresent then
-                            triggerMainStartDungeon()
-                        end
+                    end
+
+                    -- Check if ALL configured alts are inside the dungeon with loaded characters
+                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    if allReady then
+                        statusLbl.Text = "● STATUS: 👑 ALL ALTS IN DUNGEON! STARTING..."
+                        statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
+                        infoLbl.Text = string.format("🚀 All %d Alts Inside Dungeon -> Starting Match!", totalAlts)
+                        triggerMainStartDungeon()
                     else
-                        if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                        statusLbl.Text = string.format("● STATUS: ⏳ WAITING FOR ALTS (%d/%d IN DUNGEON)", loadedCount, totalAlts)
+                        statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
+                        infoLbl.Text = string.format("👥 Waiting for all %d configured alts to enter before starting...", totalAlts)
+                    end
+                else
+                    -- Alt: Ready up and click ready buttons
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                    if pG then
+                        for _, btn in ipairs(pG:GetDescendants()) do
+                            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                local bName = btn.Name:lower()
+                                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                                if bName:find("ready") or bText:find("ready") then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+end
                     end
                 end
             end
@@ -1336,6 +1449,21 @@ task.spawn(function()
             -- ================================================================
             --  [HIGHWAY COMBAT ENGINE] (Main or Full Swarm Mode)
             -- ================================================================
+            -- Staging Wait Guard for Main
+            if isMain then
+                local pG = LocalPlayer:FindFirstChild("PlayerGui")
+                local qG = pG and pG:FindFirstChild("queueGui")
+                local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
+                if sBtn or qG then
+                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    if not allReady then
+                        hum:MoveTo(myPos)
+                        task.wait(0.1)
+                        continue
+                    end
+                end
+            end
+
             local qTool, eTool = getAbilityTools()
             local qCd = getToolCooldown(qTool)
             local eCd = getToolCooldown(eTool)
