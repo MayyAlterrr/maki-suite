@@ -1125,65 +1125,59 @@ task.spawn(function()
 
             if targetGroup then
                 targetLbl.Text = string.format("🎯 Group: %s (%d mobs)", targetGroup.frontMob.model.Name, targetGroup.count)
-
-                -- Check if +80% Damage Buff from Q is currently active (< 4.2s since cast)
+                local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
                 local isQBuffActive = (lastQTime > 0) and ((now - lastQTime) <= 4.2)
-                local isFullBurstReady = isQBuffActive and eReady
 
-                -- [SAFETY GUARD: 85s AGGRO & BUFF SYNC GUARD]
-                -- If E is NOT ready OR Q buff has expired/not active, HOLD at safe distance (>= 85 studs)
-                -- Prevents attacking un-buffed and prevents entering the 71-stud mob chain-aggro line!
-                if targetGroup.nearestDist <= 85.0 and not isFullBurstReady then
-                    hum:MoveTo(myPos)
-                    local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
-                    hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
-
-                    -- If both Q and E are ready while waiting in standoff, prime fresh Q buff immediately!
-                    if qReady and eReady then
-                        lastQTime = now
-                        castSlot("q", qTool)
-                    end
-
-                    statusLbl.Text = string.format("● STATUS: 🛡️ SAFE STANDOFF (Q: %.1fs | E: %.1fs)", qCd, eCd)
-                    statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
-                    infoLbl.Text = string.format("⏳ Holding at %.1fs (Safe outside 71s aggro line • Waiting for Q+E)", targetGroup.nearestDist)
-                    task.wait(0.02)
-                    continue
-                end
-
-                -- [STAGE 2: BURST STRIKE AT <= 82 STUDS]
+                -- ================================================================
+                --  [STATE 1: 82s BURST STRIKE] Farthest mob is inside <= 82 studs
+                -- ================================================================
                 if targetGroup.farthestDist <= 82.0 then
                     hum:MoveTo(myPos)
-                    local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
 
-                    -- If Q buff was somehow not active, prime Q first with a 120ms buff delay
-                    if not isQBuffActive and qReady then
+                    if isQBuffActive and eReady then
+                        -- Q Buff is already active from the sprint -> FIRE E ALONE
+                        lastETime = now
+                        castSlot("e", eTool)
+                    elseif qReady and eReady then
+                        -- Q Buff was missing -> Prime Q, wait 120ms, then FIRE E
                         lastQTime = now
                         castSlot("q", qTool)
                         task.wait(0.12)
-                    end
-
-                    if eReady then
-                        lastETime = now
+                        lastETime = os.clock()
                         castSlot("e", eTool)
                     end
 
                     statusLbl.Text = string.format("● STATUS: 💥 100%% GROUP 1-SHOT (%d mobs)", targetGroup.count)
                     statusLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
                     infoLbl.Text = string.format("⚡ Farthest Mob at %.1fs -> E AoE Wipe (+80%% Q Buff)", targetGroup.farthestDist)
+
+                -- ================================================================
+                --  [STATE 2: 85s SAFE STANDOFF] E not ready -> Hold outside 71s aggro
+                -- ================================================================
+                elseif targetGroup.nearestDist <= 85.0 and not eReady then
+                    hum:MoveTo(myPos)
+                    hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
+
+                    statusLbl.Text = string.format("● STATUS: 🛡️ SAFE STANDOFF (Q: %.1fs | E: %.1fs)", qCd, eCd)
+                    statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
+                    infoLbl.Text = string.format("⏳ Holding at %.1fs (Safe outside 71s aggro line)", targetGroup.nearestDist)
+                    task.wait(0.02)
+                    continue
+
+                -- ================================================================
+                --  [STATE 3: 115s APPROACH SPRINT] Marching toward pack down highway
+                -- ================================================================
                 else
-                    -- [STAGE 1: APPROACH PRE-BUFF AT 85-115 STUDS]
-                    -- Pre-cast Q at <= 115 studs ONLY when E is also ready (so Q buff never expires before reaching 82s)
-                    if targetGroup.farthestDist <= 115.0 and qReady and (eReady or eCd <= 1.2) then
+                    -- Pre-cast Q alone at <= 115 studs when approaching (only if E is also ready)
+                    if targetGroup.farthestDist <= 115.0 and qReady and eReady and not isQBuffActive then
                         lastQTime = now
                         castSlot("q", qTool)
                     end
 
-                    -- Advance smoothly down highway towards pack using Q speed buff
                     statusLbl.Text = string.format("● STATUS: ⚔️ MARCHING TO 82s AoE ZONE (%.1fs)", targetGroup.farthestDist)
                     statusLbl.TextColor3 = Color3.fromRGB(120, 220, 255)
-                    infoLbl.Text = string.format("🏃 Sprinting into 82s strike zone (+80%% Q Buff active)")
+                    infoLbl.Text = isQBuffActive and "🏃 Sprinting into 82s strike zone (+80% Q Buff active)" or "🏃 Moving toward 82s strike zone"
 
                     if distToWp <= 3.5 then
                         currentIndex = currentIndex + 1
