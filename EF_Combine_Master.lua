@@ -1493,9 +1493,10 @@ task.spawn(function()
             local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "")
             local pG = LocalPlayer:FindFirstChild("PlayerGui")
             local qG = pG and pG:FindFirstChild("queueGui")
-            local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
+            local isLobbyInfoVisible = qG and qG.Enabled and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo.Visible
+            local sBtn = (pG and pG:FindFirstChild("startButton") and pG.startButton.Visible) or (isLobbyInfoVisible and qG.lobbyInfo:FindFirstChild("startButton", true))
 
-            if isPreStart and (sBtn or qG) then
+            if isPreStart and (sBtn or isLobbyInfoVisible) then
                 if isMain then
                     -- Main: Fast-approve any pending join requests
                     if Config.AutoAcceptJoins then
@@ -1770,13 +1771,15 @@ task.spawn(function()
             -- ================================================================
             --  [HIGHWAY COMBAT ENGINE] (Main or Full Swarm Mode)
             -- ================================================================
-            -- Staging Room Pre-Start Guard (Main & Swarm Alts hold at spawn until gate opens)
+            -- Staging Room Pre-Start Guard (Hold at spawn only if staging room UI is actively visible)
             local pG = LocalPlayer:FindFirstChild("PlayerGui")
             local qG = pG and pG:FindFirstChild("queueGui")
-            local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
-            if sBtn or qG then
+            local isLobbyInfoVisible = qG and qG.Enabled and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo.Visible
+            local sBtn = (pG and pG:FindFirstChild("startButton") and pG.startButton.Visible) or (isLobbyInfoVisible and qG.lobbyInfo:FindFirstChild("startButton", true))
+
+            if sBtn or isLobbyInfoVisible then
                 if isMain then
-                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    local allReady, loadedCount, activeTotal = areAllAltsInDungeon()
                     if not allReady then
                         hum:MoveTo(myPos)
                         task.wait(0.1)
