@@ -668,16 +668,85 @@ local function getTargetGroup(enemies, myPos)
 end
 
 -- ========================================================================
+--  [MODULE] 1:1 LIVE ALT DETECTION & MULTI-TIER LEVEL SCRAPER
+-- ========================================================================
+local function getLivePlayerLevel(playerName)
+    if not playerName or #playerName == 0 then return nil end
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+
+    -- 1. Check Party Status UI
+    local statusFrame = pG and pG:FindFirstChild("playerStatus")
+    local tHolder = statusFrame and statusFrame:FindFirstChild("teammateHolder", true)
+    local pCard = tHolder and tHolder:FindFirstChild(playerName)
+    local lvlLbl = pCard and pCard:FindFirstChild("level", true)
+    if lvlLbl and tonumber(lvlLbl.Text) and tonumber(lvlLbl.Text) > 0 then
+        local lvl = tonumber(lvlLbl.Text)
+        Config.AltLevels[playerName] = lvl
+        return lvl
+    end
+
+    -- 2. Check Leaderboard GUI
+    local lb = pG and pG:FindFirstChild("leaderboard")
+    local lbCard = lb and lb:FindFirstChild(playerName, true)
+    local lbLvl = lbCard and lbCard:FindFirstChild("level", true)
+    if lbLvl and tonumber(lbLvl.Text) and tonumber(lbLvl.Text) > 0 then
+        local lvl = tonumber(lbLvl.Text)
+        Config.AltLevels[playerName] = lvl
+        return lvl
+    end
+
+    -- 3. Check Player leaderstats / playerData
+    local p = Players:FindFirstChild(playerName)
+    if p then
+        local ls = p:FindFirstChild("leaderstats")
+        local lVal = ls and (ls:FindFirstChild("Level") or ls:FindFirstChild("level"))
+        if lVal and tonumber(lVal.Value) and tonumber(lVal.Value) > 0 then
+            local lvl = tonumber(lVal.Value)
+            Config.AltLevels[playerName] = lvl
+            return lvl
+        end
+        local pData = p:FindFirstChild("playerData") or p:FindFirstChild("Data")
+        local pLvl = pData and (pData:FindFirstChild("Level") or pData:FindFirstChild("level"))
+        if pLvl and tonumber(pLvl.Value) and tonumber(pLvl.Value) > 0 then
+            local lvl = tonumber(pLvl.Value)
+            Config.AltLevels[playerName] = lvl
+            return lvl
+        end
+    end
+
+    -- 4. Check Cached Config
+    if Config.AltLevels and Config.AltLevels[playerName] and Config.AltLevels[playerName] > 0 then
+        return Config.AltLevels[playerName]
+    end
+
+    return 175
+end
+
+local function getAltStatus(altName)
+    local p = Players:FindFirstChild(altName)
+    local liveLvl = getLivePlayerLevel(altName) or (Config.AltLevels and Config.AltLevels[altName]) or 175
+    local char = p and p.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if p and hrp then
+        return true, liveLvl, "🟢 In Dungeon (Loaded)"
+    elseif p then
+        return true, liveLvl, "🟡 In Server (Loading)"
+    else
+        return false, liveLvl, "⚪ In Lobby / Offline"
+    end
+end
+
+-- ========================================================================
 --  MASTER GUI (EF-COMBINE MASTER)
 -- ========================================================================
-local pGuiRef = LocalPlayer:WaitForChild("PlayerGui")
-local oldGui = pGuiRef:FindFirstChild("Maki_EF_CombineGUI") or pGuiRef:FindFirstChild("Maki_EF_SwarmGUI")
+local parentGui = getGuiParent()
+local oldGui = parentGui:FindFirstChild("Maki_EF_CombineGUI") or parentGui:FindFirstChild("Maki_EF_SwarmGUI")
 if oldGui then oldGui:Destroy() end
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "Maki_EF_CombineGUI"
 screenGui.ResetOnSpawn = false
-screenGui.Parent = pGuiRef
+screenGui.Parent = parentGui
 
 local frame = Instance.new("Frame", screenGui)
 frame.Size = UDim2.new(0, 310, 0, 300)
@@ -1113,74 +1182,6 @@ local function mainCreateAndLaunch()
     end
 end
 
--- ========================================================================
---  [MODULE] 1:1 LIVE ALT DETECTION & MULTI-TIER LEVEL SCRAPER
--- ========================================================================
-local function getLivePlayerLevel(playerName)
-    if not playerName or #playerName == 0 then return nil end
-    local pG = LocalPlayer:FindFirstChild("PlayerGui")
-
-    -- 1. Check Party Status UI
-    local statusFrame = pG and pG:FindFirstChild("playerStatus")
-    local tHolder = statusFrame and statusFrame:FindFirstChild("teammateHolder", true)
-    local pCard = tHolder and tHolder:FindFirstChild(playerName)
-    local lvlLbl = pCard and pCard:FindFirstChild("level", true)
-    if lvlLbl and tonumber(lvlLbl.Text) and tonumber(lvlLbl.Text) > 0 then
-        local lvl = tonumber(lvlLbl.Text)
-        Config.AltLevels[playerName] = lvl
-        return lvl
-    end
-
-    -- 2. Check Leaderboard GUI
-    local lb = pG and pG:FindFirstChild("leaderboard")
-    local lbCard = lb and lb:FindFirstChild(playerName, true)
-    local lbLvl = lbCard and lbCard:FindFirstChild("level", true)
-    if lbLvl and tonumber(lbLvl.Text) and tonumber(lbLvl.Text) > 0 then
-        local lvl = tonumber(lbLvl.Text)
-        Config.AltLevels[playerName] = lvl
-        return lvl
-    end
-
-    -- 3. Check Player leaderstats / playerData
-    local p = Players:FindFirstChild(playerName)
-    if p then
-        local ls = p:FindFirstChild("leaderstats")
-        local lVal = ls and (ls:FindFirstChild("Level") or ls:FindFirstChild("level"))
-        if lVal and tonumber(lVal.Value) and tonumber(lVal.Value) > 0 then
-            local lvl = tonumber(lVal.Value)
-            Config.AltLevels[playerName] = lvl
-            return lvl
-        end
-        local pData = p:FindFirstChild("playerData") or p:FindFirstChild("Data")
-        local pLvl = pData and (pData:FindFirstChild("Level") or pData:FindFirstChild("level"))
-        if pLvl and tonumber(pLvl.Value) and tonumber(pLvl.Value) > 0 then
-            local lvl = tonumber(pLvl.Value)
-            Config.AltLevels[playerName] = lvl
-            return lvl
-        end
-    end
-
-    -- 4. Check Cached Config
-    if Config.AltLevels and Config.AltLevels[playerName] and Config.AltLevels[playerName] > 0 then
-        return Config.AltLevels[playerName]
-    end
-
-    return 175
-end
-
-local function getAltStatus(altName)
-    local p = Players:FindFirstChild(altName)
-    local liveLvl = getLivePlayerLevel(altName) or (Config.AltLevels and Config.AltLevels[altName]) or 175
-    local char = p and p.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if p and hrp then
-        return true, liveLvl, "🟢 In Dungeon (Loaded)"
-    elseif p then
-        return true, liveLvl, "🟡 In Server (Loading)"
-    else
-        return false, liveLvl, "⚪ In Lobby / Offline"
-    end
-end
 
 local altLobbyExitTriggered = false
 
