@@ -1718,6 +1718,23 @@ task.spawn(function()
             if targetGroup then
                 targetLbl.Text = string.format("🎯 Group: %s (%d mobs)", targetGroup.frontMob.model.Name, targetGroup.count)
 
+                -- [SAFETY GUARD: 71s AGGRO THRESHOLD] If abilities (E) are NOT ready, HOLD at safe distance (>= 85 studs)
+                -- Prevents any single mob in the pack from crossing the 71-stud chain aggro boundary!
+                if targetGroup.nearestDist <= 85.0 and not eReady then
+                    hum:MoveTo(myPos)
+                    local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
+                    hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
+                    if qReady then
+                        lastQTime = now
+                        castSlot("q", qTool)
+                    end
+                    statusLbl.Text = string.format("● STATUS: 🛡️ SAFE STANDOFF (Q: %.1fs | E: %.1fs)", qCd, eCd)
+                    statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
+                    infoLbl.Text = string.format("⏳ Holding at %.1fs (Safe outside 71s aggro line)", targetGroup.nearestDist)
+                    task.wait(0.02)
+                    continue
+                end
+
                 -- Pre-cast Q when approaching pack within 110 studs (Activates Speed & Damage Buff!)
                 if targetGroup.farthestDist <= 110.0 and qReady then
                     lastQTime = now
