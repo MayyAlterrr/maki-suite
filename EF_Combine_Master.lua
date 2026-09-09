@@ -740,6 +740,7 @@ end
 --  MASTER GUI (EF-COMBINE MASTER)
 -- ========================================================================
 local parentGui = getGuiParent()
+local pGuiRef = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5)
 local oldGui = parentGui:FindFirstChild("Maki_EF_CombineGUI") or parentGui:FindFirstChild("Maki_EF_SwarmGUI")
 if oldGui then oldGui:Destroy() end
 
@@ -1267,11 +1268,13 @@ local function instantAcceptAndDestroyPopup(gui)
     pcall(function() gui:Destroy() end)
 end
 
-pGuiRef.ChildAdded:Connect(function(child)
-    if child.Name == "joinRequestConfirm" then
-        instantAcceptAndDestroyPopup(child)
-    end
-end)
+if pGuiRef then
+    pGuiRef.ChildAdded:Connect(function(child)
+        if child.Name == "joinRequestConfirm" then
+            instantAcceptAndDestroyPopup(child)
+        end
+    end)
+end
 
 if showJoinRemote and respondJoinRequestRemote then
     showJoinRemote.OnClientEvent:Connect(function(requesterName, ...)
