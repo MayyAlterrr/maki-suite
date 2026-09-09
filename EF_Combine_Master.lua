@@ -746,6 +746,8 @@ pageDiscord.Position = UDim2.new(0, 8, 0, 64)
 pageDiscord.BackgroundTransparency = 1
 pageDiscord.Visible = false
 
+local updateAltsTracker = nil
+
 local function switchTab(targetPage, targetBtn)
     for _, p in ipairs(pagesFolder:GetChildren()) do p.Visible = false end
     targetPage.Visible = true
@@ -754,6 +756,9 @@ local function switchTab(targetPage, targetBtn)
             btn.BackgroundColor3 = (btn == targetBtn) and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(25, 35, 50)
             btn.TextColor3 = (btn == targetBtn) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 165, 185)
         end
+    end
+    if targetPage == pageAlts and updateAltsTracker then
+        updateAltsTracker()
     end
 end
 
@@ -949,14 +954,35 @@ altsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 local altsListLayout = Instance.new("UIListLayout", altsScroll)
 altsListLayout.Padding = UDim.new(0, 4)
 
-local function updateAltsTracker()
-    btnAlts.Text = string.format("👥 ALTS (%d)", #Config.AltUsernames)
+updateAltsTracker = function()
+    local altList = Config.AltUsernames or {}
+    btnAlts.Text = string.format("👥 ALTS (%d)", #altList)
+    
     for _, c in ipairs(altsScroll:GetChildren()) do
-        if c:IsA("Frame") then c:Destroy() end
+        if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
     end
-    for idx, altName in ipairs(Config.AltUsernames) do
+
+    if #altList == 0 then
+        local emptyCard = Instance.new("Frame", altsScroll)
+        emptyCard.Size = UDim2.new(1, 0, 0, 64)
+        emptyCard.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
+        Instance.new("UICorner", emptyCard).CornerRadius = UDim.new(0, 5)
+
+        local emptyLbl = Instance.new("TextLabel", emptyCard)
+        emptyLbl.Size = UDim2.new(1, -16, 1, 0)
+        emptyLbl.Position = UDim2.new(0, 8, 0, 0)
+        emptyLbl.BackgroundTransparency = 1
+        emptyLbl.Font = Enum.Font.Gotham
+        emptyLbl.TextSize = 8
+        emptyLbl.TextColor3 = Color3.fromRGB(140, 165, 195)
+        emptyLbl.TextWrapped = true
+        emptyLbl.Text = "ℹ️ No Alts configured yet.\nEnter an Alt's exact Roblox username above and click ➕ ADD ALT."
+        return
+    end
+
+    for idx, altName in ipairs(altList) do
         local row = Instance.new("Frame", altsScroll)
-        row.Size = UDim2.new(1, 0, 0, 24)
+        row.Size = UDim2.new(1, 0, 0, 26)
         row.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
 
@@ -969,20 +995,21 @@ local function updateAltsTracker()
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
         local nameLbl = Instance.new("TextLabel", row)
-        nameLbl.Size = UDim2.new(0.48, -20, 1, 0)
-        nameLbl.Position = UDim2.new(0, 20, 0, 0)
+        nameLbl.Size = UDim2.new(0.48, -16, 1, 0)
+        nameLbl.Position = UDim2.new(0, 18, 0, 0)
         nameLbl.BackgroundTransparency = 1
-        nameLbl.Font = Enum.Font.Gotham
+        nameLbl.Font = Enum.Font.GothamBold
         nameLbl.TextSize = 8
-        nameLbl.TextColor3 = isOnline and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 150, 165)
+        nameLbl.TextColor3 = isOnline and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(175, 185, 200)
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
         nameLbl.Text = string.format("%d. %s", idx, altName)
 
         local lvlBadge = Instance.new("TextLabel", row)
         lvlBadge.Size = UDim2.new(0.24, 0, 0, 16)
         lvlBadge.Position = UDim2.new(0.48, 4, 0.5, -8)
         lvlBadge.BackgroundColor3 = isOnline and Color3.fromRGB(30, 70, 110) or Color3.fromRGB(25, 35, 45)
-        lvlBadge.TextColor3 = isOnline and Color3.fromRGB(0, 210, 255) or Color3.fromRGB(120, 130, 145)
+        lvlBadge.TextColor3 = isOnline and Color3.fromRGB(0, 210, 255) or Color3.fromRGB(140, 150, 165)
         lvlBadge.Font = Enum.Font.GothamBold
         lvlBadge.TextSize = 7.5
         lvlBadge.Text = string.format("Lv %d", liveLvl or 175)
@@ -1005,6 +1032,7 @@ local function updateAltsTracker()
         end)
     end
 end
+updateAltsTracker()
 
 local function handleAddAltEF()
     local text = (altInput.Text or ""):gsub("%s+", "")
