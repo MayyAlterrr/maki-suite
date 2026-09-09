@@ -1126,19 +1126,27 @@ task.spawn(function()
             if targetGroup then
                 targetLbl.Text = string.format("🎯 Group: %s (%d mobs)", targetGroup.frontMob.model.Name, targetGroup.count)
 
-                -- [SAFETY GUARD: 85s AGGRO THRESHOLD] If E is NOT ready, HOLD at safe distance (>= 85 studs)
-                -- Prevents any single mob in the pack from crossing the 71-stud chain aggro boundary!
-                if targetGroup.nearestDist <= 85.0 and not eReady then
+                -- Check if +80% Damage Buff from Q is currently active (< 4.2s since cast)
+                local isQBuffActive = (lastQTime > 0) and ((now - lastQTime) <= 4.2)
+                local isFullBurstReady = isQBuffActive and eReady
+
+                -- [SAFETY GUARD: 85s AGGRO & BUFF SYNC GUARD]
+                -- If E is NOT ready OR Q buff has expired/not active, HOLD at safe distance (>= 85 studs)
+                -- Prevents attacking un-buffed and prevents entering the 71-stud mob chain-aggro line!
+                if targetGroup.nearestDist <= 85.0 and not isFullBurstReady then
                     hum:MoveTo(myPos)
                     local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
-                    if qReady then
+
+                    -- If both Q and E are ready while waiting in standoff, prime fresh Q buff immediately!
+                    if qReady and eReady then
                         lastQTime = now
                         castSlot("q", qTool)
                     end
+
                     statusLbl.Text = string.format("● STATUS: 🛡️ SAFE STANDOFF (Q: %.1fs | E: %.1fs)", qCd, eCd)
                     statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
-                    infoLbl.Text = string.format("⏳ Holding at %.1fs (Safe outside 71s aggro line)", targetGroup.nearestDist)
+                    infoLbl.Text = string.format("⏳ Holding at %.1fs (Safe outside 71s aggro line • Waiting for Q+E)", targetGroup.nearestDist)
                     task.wait(0.02)
                     continue
                 end
@@ -1149,9 +1157,8 @@ task.spawn(function()
                     local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
 
-                    -- If Q was not pre-cast yet, activate Q first with a 120ms prime delay for the damage buff
-                    local isQBuffActive = (now - lastQTime) < 4.5
-                    if qReady and not isQBuffActive then
+                    -- If Q buff was somehow not active, prime Q first with a 120ms buff delay
+                    if not isQBuffActive and qReady then
                         lastQTime = now
                         castSlot("q", qTool)
                         task.wait(0.12)
@@ -1166,8 +1173,9 @@ task.spawn(function()
                     statusLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
                     infoLbl.Text = string.format("⚡ Farthest Mob at %.1fs -> E AoE Wipe (+80%% Q Buff)", targetGroup.farthestDist)
                 else
-                    -- [STAGE 1: APPROACH PRE-BUFF AT 85-110 STUDS] Pre-cast Q alone to sprint down highway
-                    if targetGroup.farthestDist <= 110.0 and qReady then
+                    -- [STAGE 1: APPROACH PRE-BUFF AT 85-115 STUDS]
+                    -- Pre-cast Q at <= 115 studs ONLY when E is also ready (so Q buff never expires before reaching 82s)
+                    if targetGroup.farthestDist <= 115.0 and qReady and (eReady or eCd <= 1.2) then
                         lastQTime = now
                         castSlot("q", qTool)
                     end
