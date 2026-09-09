@@ -905,6 +905,57 @@ task.spawn(function()
                 lastSpeedCheckTime = now
             end
 
+            if currentIndex >= 15 then
+                _G.EF_MATCH_IN_PROGRESS = true
+            end
+
+            -- ================================================================
+            --  [TOP-LEVEL PRE-BOSS AUTO-RETRY WATCHDOG]
+            --  Never bypassed by mobs, standoff guard, or cooldowns!
+            -- ================================================================
+            local isInPreBoss = isInsidePreBossZone(myPos, currentIndex)
+            if isInPreBoss then
+                if currentMoveSpeed < 2.5 then
+                    preBossStuckDuration = preBossStuckDuration + 0.02
+                    if preBossStuckDuration >= 2.5 then
+                        preBossStuckDuration = 0
+                        _G.EF_MATCH_IN_PROGRESS = false
+                        statusLbl.Text = "● STATUS: ⚠️ PRE-BOSS STALL DETECTED! Retrying..."
+                        statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
+                        infoLbl.Text = string.format("🔄 Stalled at WP %d -> Auto-Retrying Match...", currentIndex)
+
+                        task.spawn(executeSafeAutoSell)
+                        task.wait(0.2)
+
+                        if replayRemote then pcall(function() replayRemote:FireServer() end) end
+                        if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+
+                        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                        if pg then
+                            for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay", "startButton", "ready"}) do
+                                local btn = pg:FindFirstChild(btnName, true)
+                                if btn and btn:IsA("GuiButton") and btn.Visible then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                    end)
+                                end
+                            end
+                        end
+
+                        currentIndex = 1
+                        treeKilled = false
+                        minWpFloor = 1
+                        task.wait(2.0)
+                        continue
+                    end
+                else
+                    preBossStuckDuration = 0
+                end
+            else
+                preBossStuckDuration = 0
+            end
+
             -- ================================================================
             --  [MATCH STATE & REPLAY HANDLER] (Exact 1:1 Progression Master v4.0)
             -- ================================================================
@@ -1162,71 +1213,25 @@ task.spawn(function()
                     _G.EF_MATCH_IN_PROGRESS = true
                 end
 
-                local isInPreBoss = isInsidePreBossZone(myPos, currentIndex)
-
-                -- Pre-Boss Room Geometric Stall Watchdog (Instant Fast-Replay)
-                if isInPreBoss then
-                    stuckDuration = 0
-                    if currentMoveSpeed < 2.5 then
-                        preBossStuckDuration = preBossStuckDuration + 0.02
-                        if preBossStuckDuration >= 2.0 then
-                            preBossStuckDuration = 0
-                            _G.EF_MATCH_IN_PROGRESS = false
-                            statusLbl.Text = "● STATUS: ⚠️ PRE-BOSS STALL DETECTED! Fast-Replaying..."
-                            statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
-                            infoLbl.Text = "🔄 Pre-Boss Room corner hang detected -> Instantly replaying..."
-                            
-                            task.spawn(executeSafeAutoSell)
-                            task.wait(0.3)
-                            
-                            if replayRemote then pcall(function() replayRemote:FireServer() end) end
-                            if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
-
-                            local pg = LocalPlayer:FindFirstChild("PlayerGui")
-                            if pg then
-                                for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay"}) do
-                                    local btn = pg:FindFirstChild(btnName, true)
-                                    if btn and btn:IsA("GuiButton") and btn.Visible then
-                                        pcall(function()
-                                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-                                        end)
-                                    end
-                                end
-                            end
-
-                            currentIndex = 1
-                            treeKilled = false
-                            minWpFloor = 1
-                            task.wait(1.5)
-                            continue
+                -- Anti-Stall Force-Motion Watchdog (For General Highway)
+                if currentMoveSpeed < 2.0 then
+                    stuckDuration = stuckDuration + 0.02
+                    if stuckDuration >= 1.2 and (now - lastUnstuckActionTime) >= 1.0 then
+                        lastUnstuckActionTime = now
+                        hum.Jump = true
+                        
+                        if stuckDuration >= 2.0 then
+                            currentIndex = math.min(currentIndex + 2, #waypoints)
+                            targetPoint = waypoints[currentIndex]
+                            targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                            stuckDuration = 0
+                        else
+                            local nudgeOffset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
+                            hum:MoveTo(targetPos + nudgeOffset)
                         end
-                    else
-                        preBossStuckDuration = 0
                     end
                 else
-                    preBossStuckDuration = 0
-
-                    -- Anti-Stall Force-Motion Watchdog
-                    if currentMoveSpeed < 2.0 then
-                        stuckDuration = stuckDuration + 0.02
-                        if stuckDuration >= 1.2 and (now - lastUnstuckActionTime) >= 1.0 then
-                            lastUnstuckActionTime = now
-                            hum.Jump = true
-                            
-                            if stuckDuration >= 2.0 then
-                                currentIndex = math.min(currentIndex + 2, #waypoints)
-                                targetPoint = waypoints[currentIndex]
-                                targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                                stuckDuration = 0
-                            else
-                                local nudgeOffset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
-                                hum:MoveTo(targetPos + nudgeOffset)
-                            end
-                        end
-                    else
-                        stuckDuration = 0
-                    end
+                    stuckDuration = 0
                 end
 
                 if currentIndex <= #waypoints then hum:MoveTo(targetPos) end
