@@ -1143,30 +1143,35 @@ task.spawn(function()
                     continue
                 end
 
-                -- [STAGE 1: APPROACH PRE-BUFF] Pre-cast Q at 85-110 studs for +80% Speed & +80% Damage Amplification
-                if targetGroup.farthestDist <= 110.0 and qReady then
-                    lastQTime = now
-                    castSlot("q", qTool)
-                end
-
-                -- [STAGE 2: BURST STRIKE] When farthest mob is <= 82 studs -> PAUSE & CONSUME BUFF WITH E WIPE!
+                -- [STAGE 2: BURST STRIKE AT <= 82 STUDS]
                 if targetGroup.farthestDist <= 82.0 then
                     hum:MoveTo(myPos)
                     local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
                     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
 
-                    statusLbl.Text = string.format("● STATUS: 💥 100%% GROUP 1-SHOT (%d mobs)", targetGroup.count)
-                    statusLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
-                    infoLbl.Text = string.format("⚡ Farthest Mob at %.1fs -> E AoE Wipe (+80%% Q Buff)", targetGroup.farthestDist)
+                    -- If Q was not pre-cast yet, activate Q first with a 120ms prime delay for the damage buff
+                    local isQBuffActive = (now - lastQTime) < 4.5
+                    if qReady and not isQBuffActive then
+                        lastQTime = now
+                        castSlot("q", qTool)
+                        task.wait(0.12)
+                    end
 
                     if eReady then
                         lastETime = now
                         castSlot("e", eTool)
-                    elseif qReady then
+                    end
+
+                    statusLbl.Text = string.format("● STATUS: 💥 100%% GROUP 1-SHOT (%d mobs)", targetGroup.count)
+                    statusLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
+                    infoLbl.Text = string.format("⚡ Farthest Mob at %.1fs -> E AoE Wipe (+80%% Q Buff)", targetGroup.farthestDist)
+                else
+                    -- [STAGE 1: APPROACH PRE-BUFF AT 85-110 STUDS] Pre-cast Q alone to sprint down highway
+                    if targetGroup.farthestDist <= 110.0 and qReady then
                         lastQTime = now
                         castSlot("q", qTool)
                     end
-                else
+
                     -- Advance smoothly down highway towards pack using Q speed buff
                     statusLbl.Text = string.format("● STATUS: ⚔️ MARCHING TO 82s AoE ZONE (%.1fs)", targetGroup.farthestDist)
                     statusLbl.TextColor3 = Color3.fromRGB(120, 220, 255)
