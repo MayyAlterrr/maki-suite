@@ -233,18 +233,14 @@ local function handleLoginSplash()
 end
 
 local function isMainLobby()
-    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pGui then
-        if pGui:FindFirstChild("mainInterface") or pGui:FindFirstChild("queueGui") or pGui:FindFirstChild("introGui") then
-            return true
-        end
-        if pGui:FindFirstChild("timeLeftGui") then
-            return false
-        end
-    end
-
+    -- 1. Definite Dungeon Indicators (Checked FIRST)
     local dName = Workspace:FindFirstChild("dungeonName")
     if dName and dName:IsA("StringValue") and #dName.Value > 0 then
+        return false
+    end
+
+    local dObj = Workspace:FindFirstChild("dungeon")
+    if dObj and #dObj:GetChildren() > 0 then
         return false
     end
 
@@ -258,15 +254,22 @@ local function isMainLobby()
         return false
     end
 
-    local dObj = Workspace:FindFirstChild("dungeon")
-    if dObj and #dObj:GetChildren() > 0 then
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pGui and pGui:FindFirstChild("timeLeftGui") then
         return false
     end
 
+    local enemies = Workspace:FindFirstChild("enemies")
+    if enemies and #enemies:GetChildren() > 0 then
+        return false
+    end
+
+    -- 2. Definite Main Lobby Check
     if game.PlaceId == 77649408247578 or game.PlaceId == 2414851778 then
         return true
     end
 
+    -- If no dungeon markers exist, we are in Lobby
     return true
 end
 
