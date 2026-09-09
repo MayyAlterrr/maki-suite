@@ -171,7 +171,18 @@ local function updateMainRole()
     if Config.CarryUsername and #Config.CarryUsername > 0 then
         isMain = (LocalPlayer.Name:lower() == Config.CarryUsername:lower())
     else
-        isMain = false
+        local isListedAlt = false
+        for _, alt in ipairs(Config.AltUsernames or {}) do
+            if alt:lower() == LocalPlayer.Name:lower() then
+                isListedAlt = true
+                break
+            end
+        end
+        isMain = not isListedAlt
+        if isMain then
+            Config.CarryUsername = LocalPlayer.Name
+            saveConfig()
+        end
     end
 end
 updateMainRole()
@@ -189,12 +200,73 @@ pcall(function()
     end)
 end)
 
+local function fireButton(btn)
+    if not btn then return end
+    for _, evName in ipairs({'Activated', 'MouseButton1Click', 'MouseButton1Down', 'InputBegan'}) do
+        local ok, conns = pcall(function() return getconnections and getconnections(btn[evName]) or {} end)
+        if ok and conns then
+            for _, conn in ipairs(conns) do
+                pcall(function()
+                    if type(conn.Function) == 'function' then conn.Function() elseif type(conn.Fire) == 'function' then conn:Fire() end
+                end)
+            end
+        end
+    end
+    if firesignal then
+        pcall(function() firesignal(btn.MouseButton1Down) end)
+        pcall(function() firesignal(btn.MouseButton1Click) end)
+        pcall(function() firesignal(btn.Activated) end)
+    end
+end
+
+local function handleLoginSplash()
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pGui then return end
+    local introGui = pGui:FindFirstChild("introGui")
+    if introGui and introGui.Enabled ~= false then
+        local titleFrame = introGui:FindFirstChild("title") and introGui.title:FindFirstChild("Frame")
+        local playBtn = titleFrame and titleFrame:FindFirstChild("TextButton")
+        if playBtn and playBtn.Visible then
+            fireButton(playBtn)
+        end
+    end
+end
+
 local function isMainLobby()
-    if game.PlaceId == 77649408247578 or game.PlaceId == 2414851778 then return true end
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pGui then
+        if pGui:FindFirstChild("mainInterface") or pGui:FindFirstChild("queueGui") or pGui:FindFirstChild("introGui") then
+            return true
+        end
+        if pGui:FindFirstChild("timeLeftGui") then
+            return false
+        end
+    end
+
     local dName = Workspace:FindFirstChild("dungeonName")
-    if dName and dName:IsA("StringValue") and #dName.Value > 0 then return false end
+    if dName and dName:IsA("StringValue") and #dName.Value > 0 then
+        return false
+    end
+
+    local dProg = Workspace:FindFirstChild("dungeonProgress")
+    if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
+        return false
+    end
+
+    local timeLeft = Workspace:FindFirstChild("timeLeft")
+    if timeLeft and timeLeft:IsA("NumberValue") then
+        return false
+    end
+
     local dObj = Workspace:FindFirstChild("dungeon")
-    if dObj then return false end
+    if dObj and #dObj:GetChildren() > 0 then
+        return false
+    end
+
+    if game.PlaceId == 77649408247578 or game.PlaceId == 2414851778 then
+        return true
+    end
+
     return true
 end
 
@@ -1160,14 +1232,78 @@ local function mainCreateAndLaunch()
     saveConfig()
 
     print(string.format("[Maki Host 👑] Creating Target Staging Lobby: %s (%s) [Req: %d]...", dName, dDiff, dReq))
+    
     local ok, res = pcall(function()
-        return createLobbyRemote:InvokeServer(dName, dDiff, dReq, Config.HardcoreMode or false, true, false)
+        if createLobbyRemote then
+            return createLobbyRemote:InvokeServer(dName, dDiff, dReq, Config.HardcoreMode or false, true, false)
+        end
     end)
+
+    -- Complete UI Fallback / Automation
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        local mInt = pG:FindFirstChild("mainInterface")
+        local lPlayBtn = mInt and mInt:FindFirstChild("buttons") and mInt.buttons:FindFirstChild("playButton")
+        if lPlayBtn and lPlayBtn.Visible then fireButton(lPlayBtn) end
+
+        local qG = pG:FindFirstChild("queueGui")
+        local selectOpt = qG and qG:FindFirstChild("selectOption")
+        if selectOpt and selectOpt.Visible then
+            local cBtn = selectOpt.Frame:FindFirstChild("createGame") or selectOpt.Frame:FindFirstChild("createDungeon")
+            if cBtn then fireButton(cBtn) end
+        end
+
+        local chooseD = qG and qG:FindFirstChild("chooseDungeon")
+        if chooseD and chooseD.Visible then
+            -- 1. Select Dungeon
+            local scroll = chooseD.backgroundFillLeft:FindFirstChild("ScrollingFrame")
+            local dItem = scroll and scroll:FindFirstChild(dName)
+            if dItem then
+                local btn = dItem:FindFirstChild("TextButton") or dItem:FindFirstChildOfClass("GuiButton")
+                if btn then fireButton(btn) end
+            end
+
+            -- 2. Select Difficulty
+            local bgRight = chooseD:FindFirstChild("backgroundFillRight")
+            local diffItem = bgRight and bgRight:FindFirstChild(dDiff)
+            if diffItem then
+                local btn = diffItem:FindFirstChild("TextButton") or diffItem:FindFirstChildOfClass("GuiButton")
+                if btn then fireButton(btn) end
+            end
+
+            -- 3. Hardcore Option
+            local hcSection = bgRight and bgRight:FindFirstChild("hardcoreSection")
+            local hcItem = hcSection and hcSection:FindFirstChild("hardcore")
+            if hcItem then
+                local isChosen = hcItem.chosenIndicatorBackground.chosenIndicatorFill.chosen.Visible
+                if isChosen ~= (Config.HardcoreMode == true) then
+                    local btn = hcItem:FindFirstChild("TextButton") or hcItem:FindFirstChildOfClass("GuiButton")
+                    if btn then fireButton(btn) end
+                end
+            end
+
+            -- 4. Private Option
+            local priv = chooseD:FindFirstChild("private")
+            local privInner = priv and priv:FindFirstChild("Frame") and priv.Frame:FindFirstChild("privateInner")
+            if privInner then
+                local isChosen = privInner.chosenIndicatorBackground.chosenIndicatorFill.chosen.Visible
+                if not isChosen then
+                    local btn = priv.Frame:FindFirstChild("button") or priv.Frame:FindFirstChildOfClass("GuiButton")
+                    if btn then fireButton(btn) end
+                end
+            end
+
+            -- 5. Click "Create Lobby"
+            local startMain = chooseD.backgroundFillMiddle:FindFirstChild("startMain")
+            local createBtn = startMain and (startMain:FindFirstChild("TextButton") or startMain:FindFirstChildOfClass("GuiButton"))
+            if createBtn then fireButton(createBtn) end
+        end
+    end
 
     if ok and res == true then
         print("[Maki Host ✅] Lobby Created! Whitelisting Swarm Alts...")
         if addPlayerToWhitelistRemote then
-            for _, altName in ipairs(Config.AltUsernames) do
+            for _, altName in ipairs(Config.AltUsernames or {}) do
                 pcall(function() addPlayerToWhitelistRemote:FireServer(altName) end)
                 task.wait(0.01)
             end
@@ -1401,7 +1537,10 @@ end)
 -- Lobby Supervisor Loop
 task.spawn(function()
     while _G.MAKI_EF_COMBINE_RUNNING do
-        task.wait(1.0)
+        task.wait(0.5)
+        pcall(handleLoginSplash)
+        updateMainRole()
+
         if isMainLobby() then
             targetLbl.Text = "🎯 TARGET: Enchanted Forest (Nightmare)"
             infoLbl.Text = "🏰 Dedicated Level 175 EF NM Combine Suite"
