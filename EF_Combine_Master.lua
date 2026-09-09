@@ -246,29 +246,102 @@ local function sendDiscordWebhook(embed)
 end
 
 -- ========================================================================
---  AUTO-SELL ENGINE
+--  AUTO-SELL & ITEM PROTECTION ENGINE
 -- ========================================================================
+local ProtectedPurpleItems = {
+    ["crystalline shard staff"]   = true,
+    ["overgrown war scythe"]       = true,
+    ["crystalline mage armor"]     = true,
+    ["crystalline mage helmet"]    = true,
+    ["crystalline warrior armor"]  = true,
+    ["crystalline warrior helmet"] = true
+}
+
+local function isPurpleCollect(itemName)
+    if not itemName then return false, false end
+    local n = itemName:lower()
+    local isHighTier = n:find("eldenbark") ~= nil or n:find("valhalla") ~= nil or n:find("eye of") ~= nil or n:find("eif") ~= nil or n:find("inferno") ~= nil
+    local isCollect = n:find("guardian") or n:find("titan") or n:find("overlord") or n:find("captain") or n:find("warlord") or n:find("king") or n:find("mage") or isHighTier
+    return isCollect, isHighTier
+end
+
+local function isItemProtectedFromSell(category, itemName, rarity, isEquipped)
+    if isEquipped then return true end
+    local rLower = rarity and rarity:lower() or "common"
+    if rLower == "legendary" or rLower == "ultimate" or rLower == "mythic" then
+        return true
+    end
+
+    local nLower = itemName and itemName:lower() or ""
+
+    -- User-Defined: Protect ONLY the PURPLE/EPIC version of these items (Blue/Green/Gray versions are SOLD)
+    if rLower == "epic" or rLower == "purple" then
+        for pName, _ in pairs(ProtectedPurpleItems) do
+            if nLower:find(pName) then
+                return true
+            end
+        end
+    end
+
+    local isCollect, isHighTier = isPurpleCollect(itemName)
+
+    -- Abilities: keep only Legendary/Ultimate/Mythic
+    if category == "ability" then
+        return false
+    end
+
+    -- Weapons: keep high-tier / legendaries
+    if category == "weapon" then
+        if isCollect and isHighTier then return true end
+        return false
+    end
+
+    -- Armor (Chests & Helmets): keep high-tier collects
+    if category == "chest" or category == "helmet" then
+        if isCollect and isHighTier then return true end
+        return false
+    end
+
+    return false
+end
+
 local function executeSafeAutoSell()
-    if not Config.AutoSellTrashes or not sellItemEventRemote then return end
+    if not Config.AutoSellTrashes or not reloadInvyRemote or not sellItemEventRemote then return end
     task.spawn(function()
-        if reloadInvyRemote then pcall(function() reloadInvyRemote:InvokeServer() end) end
-        task.wait(0.5)
-        local bp = LocalPlayer:FindFirstChild("Backpack")
-        if not bp then return end
-        local soldCount = 0
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                local itemName = item.Name:lower()
-                local isSafe = itemName:find("eif") or itemName:find("eir") or itemName:find("eye of") or itemName:find("inferno") or itemName:find("valhalla") or itemName:find("eldenbark")
-                if not isSafe then
-                    pcall(function() sellItemEventRemote:FireServer(item) end)
-                    soldCount = soldCount + 1
-                    task.wait(0.04)
+        local ok, inv = pcall(function() return reloadInvyRemote:InvokeServer() end)
+        if not ok or type(inv) ~= "table" then return end
+
+        local itemsToSell = { weapon = {}, ability = {}, chest = {}, helmet = {} }
+        local totalSold = 0
+
+        local function scanCategory(category, tbl, keyPrefix)
+            if type(tbl) ~= "table" then return end
+            for key, item in pairs(tbl) do
+                local itemKey = tostring(key)
+                local isEquipped = (typeof(item.equipped) == "table" and (item.equipped.q or item.equipped.e)) or (item.equipped == true)
+                local rarity = item.rarity and item.rarity:lower() or "common"
+                local itemName = item.name or item.displayName or itemKey
+
+                local protected = isItemProtectedFromSell(category, itemName, rarity, isEquipped)
+
+                if not protected then
+                    local idNum = tonumber(string.sub(itemKey, #keyPrefix + 1)) or tonumber(string.match(itemKey, "%d+"))
+                    if idNum then
+                        table.insert(itemsToSell[category], idNum)
+                        totalSold = totalSold + 1
+                    end
                 end
             end
         end
-        if soldCount > 0 then
-            print(string.format("[Maki Auto-Sell 💰] Safely sold %d items.", soldCount))
+
+        scanCategory("weapon", inv.weapons, "weapon_")
+        scanCategory("ability", inv.abilities, "ability_")
+        scanCategory("chest", inv.chests, "chest_")
+        scanCategory("helmet", inv.helmets, "helmet_")
+
+        if totalSold > 0 then
+            pcall(function() sellItemEventRemote:FireServer(itemsToSell) end)
+            print(string.format("[%s 💰] Auto-Sold %d trash items! (Equipped & Legendaries Protected)", LocalPlayer.Name, totalSold))
         end
     end)
 end
@@ -417,31 +490,71 @@ end
 local function isBossTarget(desc, hum, root)
     if not desc or not hum or not root then return false, false end
     local n = desc.Name:lower()
+
     if n:find("mushroom") or n:find("spear") or n:find("archer") or n:find("spider") or n:find("bat") or n:find("wolf") or n:find("spirit") then
         return false, false
     end
-    local isBoss = (n:find("dragon") ~= nil) or (n:find("tree") ~= nil) or (n:find("golem") ~= nil) or (n:find("ent") ~= nil) or (hum.MaxHealth >= 500000)
+
+    local isBoss = (n:find("dragon") ~= nil)
+        or (n:find("tree") ~= nil)
+        or (n:find("golem") ~= nil)
+        or (n:find("ent") ~= nil)
+        or (n:find("guardian") ~= nil)
+        or (n:find("boss") ~= nil)
+        or (n:find("oak") ~= nil)
+        or (n:find("elder") ~= nil)
+        or (n:find("king") ~= nil)
+        or (n:find("lord") ~= nil)
+        or (n:find("titan") ~= nil)
+        or (n:find("beast") ~= nil)
+        or (n:find("ancient") ~= nil)
+        or (n:find("champion") ~= nil)
+        or (hum.MaxHealth >= 500000)
+
     if not isBoss then return false, false end
-    local isTreeChasm = (n:find("ancient tree") ~= nil or (n:find("tree") and n:find("boss")) or n:find("ancient oak")) and not n:find("dragon")
-    if (root.Position - TREE_CENTER_POS).Magnitude <= 180.0 and (n:find("tree") or n:find("oak")) then isTreeChasm = true end
+
+    local isTreeChasm = (n:find("ancient tree") ~= nil or (n:find("tree") and n:find("boss")) or n:find("ancient oak"))
+        and not n:find("dragon") and not n:find("golem") and not n:find("ent")
+
+    if (root.Position - TREE_CENTER_POS).Magnitude <= 180.0 and (n:find("tree") or n:find("oak") or n:find("ancient") or n:find("boss") or hum.MaxHealth >= 500000) then
+        isTreeChasm = true
+    end
+
     return true, isTreeChasm
 end
 
 local function findBossOrTree()
     local checked = {}
+
     local function inspectObj(desc)
         if not desc or not desc:IsA("Model") or checked[desc] then return nil end
         checked[desc] = true
+
         for _, p in ipairs(Players:GetPlayers()) do
             if p.Character == desc or p.Name == desc.Name then return nil end
         end
+
         local hum = desc:FindFirstChildOfClass("Humanoid")
         local root = desc.PrimaryPart or desc:FindFirstChild("HumanoidRootPart") or desc:FindFirstChild("Head") or desc:FindFirstChildOfClass("BasePart")
         if hum and hum.Health > 0 and root then
             local isBoss, isTreeChasm = isBossTarget(desc, hum, root)
-            if isBoss then return desc, hum, root, isTreeChasm end
+            if isBoss then
+                return desc, hum, root, isTreeChasm
+            end
         end
         return nil
+    end
+
+    local dungeon = Workspace:FindFirstChild("dungeon")
+    if dungeon then
+        for _, room in ipairs(dungeon:GetChildren()) do
+            local m, h, r, isT = inspectObj(room)
+            if m then return m, h, r, isT end
+            for _, desc in ipairs(room:GetDescendants()) do
+                local m, h, r, isT = inspectObj(desc)
+                if m then return m, h, r, isT end
+            end
+        end
     end
 
     local enemies = Workspace:FindFirstChild("enemies")
@@ -449,14 +562,24 @@ local function findBossOrTree()
         for _, desc in ipairs(enemies:GetChildren()) do
             local m, h, r, isT = inspectObj(desc)
             if m then return m, h, r, isT end
+            for _, sub in ipairs(desc:GetDescendants()) do
+                local m, h, r, isT = inspectObj(sub)
+                if m then return m, h, r, isT end
+            end
         end
     end
+
     for _, desc in ipairs(Workspace:GetChildren()) do
         if desc:IsA("Model") then
             local m, h, r, isT = inspectObj(desc)
             if m then return m, h, r, isT end
+            for _, sub in ipairs(desc:GetDescendants()) do
+                local m, h, r, isT = inspectObj(sub)
+                if m then return m, h, r, isT end
+            end
         end
     end
+
     return nil, nil, nil, false
 end
 
@@ -843,8 +966,7 @@ local function updateAltsTracker()
         row.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
 
-        local pObj = Players:FindFirstChild(altName)
-        local isOnline = (pObj ~= nil)
+        local isOnline, liveLvl, statusText = getAltStatus(altName)
 
         local dot = Instance.new("Frame", row)
         dot.Size = UDim2.new(0, 8, 0, 8)
@@ -853,7 +975,7 @@ local function updateAltsTracker()
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
         local nameLbl = Instance.new("TextLabel", row)
-        nameLbl.Size = UDim2.new(0.65, -20, 1, 0)
+        nameLbl.Size = UDim2.new(0.48, -20, 1, 0)
         nameLbl.Position = UDim2.new(0, 20, 0, 0)
         nameLbl.BackgroundTransparency = 1
         nameLbl.Font = Enum.Font.Gotham
@@ -861,6 +983,16 @@ local function updateAltsTracker()
         nameLbl.TextColor3 = isOnline and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 150, 165)
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
         nameLbl.Text = string.format("%d. %s", idx, altName)
+
+        local lvlBadge = Instance.new("TextLabel", row)
+        lvlBadge.Size = UDim2.new(0.24, 0, 0, 16)
+        lvlBadge.Position = UDim2.new(0.48, 4, 0.5, -8)
+        lvlBadge.BackgroundColor3 = isOnline and Color3.fromRGB(30, 70, 110) or Color3.fromRGB(25, 35, 45)
+        lvlBadge.TextColor3 = isOnline and Color3.fromRGB(0, 210, 255) or Color3.fromRGB(120, 130, 145)
+        lvlBadge.Font = Enum.Font.GothamBold
+        lvlBadge.TextSize = 7.5
+        lvlBadge.Text = string.format("Lv %d", liveLvl or 175)
+        Instance.new("UICorner", lvlBadge).CornerRadius = UDim.new(0, 3)
 
         local removeBtn = Instance.new("TextButton", row)
         removeBtn.Size = UDim2.new(0, 20, 0, 18)
@@ -959,6 +1091,185 @@ local function mainCreateAndLaunch()
     end
 end
 
+-- ========================================================================
+--  [MODULE] 1:1 LIVE ALT DETECTION & MULTI-TIER LEVEL SCRAPER
+-- ========================================================================
+local function getLivePlayerLevel(playerName)
+    if not playerName or #playerName == 0 then return nil end
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+
+    -- 1. Check Party Status UI
+    local statusFrame = pG and pG:FindFirstChild("playerStatus")
+    local tHolder = statusFrame and statusFrame:FindFirstChild("teammateHolder", true)
+    local pCard = tHolder and tHolder:FindFirstChild(playerName)
+    local lvlLbl = pCard and pCard:FindFirstChild("level", true)
+    if lvlLbl and tonumber(lvlLbl.Text) and tonumber(lvlLbl.Text) > 0 then
+        local lvl = tonumber(lvlLbl.Text)
+        Config.AltLevels[playerName] = lvl
+        return lvl
+    end
+
+    -- 2. Check Leaderboard GUI
+    local lb = pG and pG:FindFirstChild("leaderboard")
+    local lbCard = lb and lb:FindFirstChild(playerName, true)
+    local lbLvl = lbCard and lbCard:FindFirstChild("level", true)
+    if lbLvl and tonumber(lbLvl.Text) and tonumber(lbLvl.Text) > 0 then
+        local lvl = tonumber(lbLvl.Text)
+        Config.AltLevels[playerName] = lvl
+        return lvl
+    end
+
+    -- 3. Check Player leaderstats / playerData
+    local p = Players:FindFirstChild(playerName)
+    if p then
+        local ls = p:FindFirstChild("leaderstats")
+        local lVal = ls and (ls:FindFirstChild("Level") or ls:FindFirstChild("level"))
+        if lVal and tonumber(lVal.Value) and tonumber(lVal.Value) > 0 then
+            local lvl = tonumber(lVal.Value)
+            Config.AltLevels[playerName] = lvl
+            return lvl
+        end
+        local pData = p:FindFirstChild("playerData") or p:FindFirstChild("Data")
+        local pLvl = pData and (pData:FindFirstChild("Level") or pData:FindFirstChild("level"))
+        if pLvl and tonumber(pLvl.Value) and tonumber(pLvl.Value) > 0 then
+            local lvl = tonumber(pLvl.Value)
+            Config.AltLevels[playerName] = lvl
+            return lvl
+        end
+    end
+
+    -- 4. Check Cached Config
+    if Config.AltLevels and Config.AltLevels[playerName] and Config.AltLevels[playerName] > 0 then
+        return Config.AltLevels[playerName]
+    end
+
+    return 175
+end
+
+local function getAltStatus(altName)
+    local p = Players:FindFirstChild(altName)
+    local liveLvl = getLivePlayerLevel(altName) or (Config.AltLevels and Config.AltLevels[altName]) or 175
+    local char = p and p.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if p and hrp then
+        return true, liveLvl, "🟢 In Dungeon (Loaded)"
+    elseif p then
+        return true, liveLvl, "🟡 In Server (Loading)"
+    else
+        return false, liveLvl, "⚪ In Lobby / Offline"
+    end
+end
+
+local altLobbyExitTriggered = false
+
+local function exitAltToMainLobby()
+    if altLobbyExitTriggered then return end
+    altLobbyExitTriggered = true
+    print("[Maki Alt 🚪] 👑 Main left dungeon! Returning Alt to Main Lobby...")
+
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    local retBtn = pG and (pG:FindFirstChild("ReturnToLobbyButton", true) or pG:FindFirstChild("leaveDungeon", true) or pG:FindFirstChild("leaveButton", true))
+    if retBtn then
+        pcall(function()
+            for _, c in ipairs(getconnections(retBtn.Activated)) do c:Fire() end
+            for _, c in ipairs(getconnections(retBtn.MouseButton1Click)) do c:Fire() end
+        end)
+    end
+
+    if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
+    local rLobby = remotes and (remotes:FindFirstChild("ReturnToLobbyEvent") or remotes:FindFirstChild("teleToLobby") or remotes:FindFirstChild("leaveGame"))
+    if rLobby then pcall(function() rLobby:FireServer() end) end
+
+    task.wait(1.5)
+    pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
+end
+
+-- Listener: If Main leaves the server/dungeon, immediately trigger Alt lobby exit
+Players.PlayerRemoving:Connect(function(player)
+    if not isMain and isDungeon() then
+        if Config.CarryUsername and #Config.CarryUsername > 0 then
+            if player.Name:lower() == Config.CarryUsername:lower() then
+                print(string.format("[Maki Alt 🚪] Main '%s' left the dungeon! Exiting Alt to Main Lobby...", player.Name))
+                exitAltToMainLobby()
+            end
+        end
+    end
+end)
+
+local function areAllAltsInDungeon()
+    loadConfig()
+    local altList = Config.AltUsernames or {}
+    if #altList == 0 then
+        return true, 0, 0
+    end
+
+    local loadedCount = 0
+    for _, altName in ipairs(altList) do
+        local p = Players:FindFirstChild(altName)
+        if p then
+            local char = p.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                getLivePlayerLevel(altName)
+                loadedCount = loadedCount + 1
+            end
+        end
+    end
+
+    return (loadedCount >= #altList), loadedCount, #altList
+end
+
+local function instantAcceptAndDestroyPopup(gui)
+    if not gui or gui.Name ~= "joinRequestConfirm" then return end
+    if not isMain or not Config.AutoAcceptJoins then return end
+
+    local cBtn = gui:FindFirstChild("confirm", true) and gui.confirm:FindFirstChild("TextButton", true)
+    if cBtn then
+        pcall(function()
+            for _, c in ipairs(getconnections(cBtn.MouseButton1Click)) do c:Fire() end
+            for _, c in ipairs(getconnections(cBtn.MouseButton1Down)) do c:Fire() end
+            for _, c in ipairs(getconnections(cBtn.Activated)) do c:Fire() end
+        end)
+    end
+
+    local pLbl = gui:FindFirstChild("prompt", true)
+    if pLbl and pLbl.Text and respondJoinRequestRemote then
+        for _, altName in ipairs(Config.AltUsernames or {}) do
+            if pLbl.Text:lower():find(altName:lower()) then
+                pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
+            end
+        end
+    end
+
+    pcall(function() gui:Destroy() end)
+end
+
+pGuiRef.ChildAdded:Connect(function(child)
+    if child.Name == "joinRequestConfirm" then
+        instantAcceptAndDestroyPopup(child)
+    end
+end)
+
+if showJoinRemote and respondJoinRequestRemote then
+    showJoinRemote.OnClientEvent:Connect(function(requesterName, ...)
+        if isMain and Config.AutoAcceptJoins then
+            local nameStr = tostring(requesterName)
+            pcall(function()
+                respondJoinRequestRemote:FireServer(nameStr, true)
+            end)
+            print(string.format("[Maki Host ⚡] Instantly Approved Alt: %s (0ms)!", nameStr))
+
+            task.spawn(function()
+                for _, c in ipairs(pGuiRef:GetChildren()) do
+                    if c.Name == "joinRequestConfirm" then
+                        instantAcceptAndDestroyPopup(c)
+                    end
+                end
+            end)
+        end
+    end)
+end
+
 local function triggerMainStartDungeon()
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
@@ -969,11 +1280,97 @@ local function triggerMainStartDungeon()
                 for _, c in ipairs(getconnections(sBtn1.MouseButton1Click)) do c:Fire() end
             end)
         end
+        local qG = pG:FindFirstChild("queueGui")
+        local sBtn2 = qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true)
+        if sBtn2 then
+            pcall(function()
+                for _, c in ipairs(getconnections(sBtn2.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn2.MouseButton1Click)) do c:Fire() end
+            end)
+        end
+        for _, btn in ipairs(pG:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                local bName = btn.Name:lower()
+                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                if bName:find("start") or bText:find("start") or bName:find("ready") or bText:find("ready") then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                    end)
+                end
+            end
+        end
     end
     if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
     if startDungeonRemote then pcall(function() startDungeonRemote:FireServer() end) end
     if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
 end
+
+-- Staging Room Auto-Start & Alt Synchronization Watcher Loop
+task.spawn(function()
+    while _G.MAKI_EF_COMBINE_RUNNING do
+        task.wait(0.3)
+        if isDungeon() then
+            local prog = getMatchProgress()
+            local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "")
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local qG = pG and pG:FindFirstChild("queueGui")
+            local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
+
+            if isPreStart and (sBtn or qG) then
+                if isMain then
+                    -- Main: Fast-approve any pending join requests
+                    if Config.AutoAcceptJoins then
+                        for _, c in ipairs(pG:GetChildren()) do
+                            if c.Name == "joinRequestConfirm" then
+                                instantAcceptAndDestroyPopup(c)
+                            end
+                        end
+                        if respondJoinRequestRemote and Config.AltUsernames then
+                            for _, altName in ipairs(Config.AltUsernames) do
+                                if not Players:FindFirstChild(altName) then
+                                    pcall(function()
+                                        respondJoinRequestRemote:FireServer(altName, true)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+
+                    -- Check if ALL configured alts are inside the dungeon with loaded characters
+                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    if allReady then
+                        statusLbl.Text = "● STATUS: 👑 ALL ALTS IN DUNGEON! STARTING..."
+                        statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
+                        infoLbl.Text = string.format("🚀 All %d Alts Inside Dungeon -> Starting Match!", totalAlts)
+                        triggerMainStartDungeon()
+                    else
+                        statusLbl.Text = string.format("● STATUS: ⏳ WAITING FOR ALTS (%d/%d IN DUNGEON)", loadedCount, totalAlts)
+                        statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
+                        infoLbl.Text = string.format("👥 Waiting for all %d configured alts to enter before starting...", totalAlts)
+                    end
+                else
+                    -- Alt: Ready up and click ready buttons
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                    if pG then
+                        for _, btn in ipairs(pG:GetDescendants()) do
+                            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                local bName = btn.Name:lower()
+                                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                                if bName:find("ready") or bText:find("ready") then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
 
 -- Lobby Supervisor Loop
 task.spawn(function()
@@ -994,10 +1391,11 @@ task.spawn(function()
     end
 end)
 
--- Alt Auto-Join in Lobby
+-- Alt Auto-Join & Main Departure Watcher
 task.spawn(function()
     while _G.MAKI_EF_COMBINE_RUNNING do
         if not isMain and isMainLobby() then
+            altLobbyExitTriggered = false
             pcall(function()
                 local mainName = Config.CarryUsername or ""
                 if #mainName > 0 then
@@ -1005,6 +1403,18 @@ task.spawn(function()
                     if joinDungeonRemote then joinDungeonRemote:InvokeServer(mainName) end
                 end
             end)
+        elseif not isMain and isDungeon() and not altLobbyExitTriggered then
+            if Config.CarryUsername and #Config.CarryUsername > 0 then
+                local mainInServer = Players:FindFirstChild(Config.CarryUsername)
+                if not mainInServer then
+                    -- Debounce verification check
+                    task.wait(2.0)
+                    if not isMain and isDungeon() and not Players:FindFirstChild(Config.CarryUsername) then
+                        print(string.format("[Maki Alt 🚪] Main '%s' no longer in dungeon! Exiting Alt to Main Lobby...", Config.CarryUsername))
+                        exitAltToMainLobby()
+                    end
+                end
+            end
         end
         task.wait(0.5)
     end
@@ -1031,6 +1441,13 @@ task.spawn(function()
     local lastPosBeforeTick = nil
     local treeKilled = false
     local minWpFloor = 1
+
+    -- Movement Speed Calculator & Anti-Stall Watchdog Variables
+    local lastSpeedCheckPos = nil
+    local lastSpeedCheckTime = os.clock()
+    local currentMoveSpeed = 0
+    local stuckDuration = 0
+    local lastUnstuckActionTime = 0
 
     -- Alt Spawn Standby Variables
     local altSpawnOrigin = nil
@@ -1067,6 +1484,28 @@ task.spawn(function()
         if hrp and hum and hum.Health > 0 then
             local myPos = hrp.Position
             local now = os.clock()
+
+            -- Real-Time Movement Speed Calculator (studs/second)
+            local dt = now - lastSpeedCheckTime
+            if dt >= 0.15 then
+                if lastSpeedCheckPos then
+                    currentMoveSpeed = (myPos - lastSpeedCheckPos).Magnitude / dt
+                end
+                lastSpeedCheckPos = myPos
+                lastSpeedCheckTime = now
+            end
+
+            -- ================================================================
+            --  [REAL-TIME MOVEMENT SPEED CALCULATOR]
+            -- ================================================================
+            local dt = now - lastSpeedCheckTime
+            if dt >= 0.15 then
+                if lastSpeedCheckPos then
+                    currentMoveSpeed = (myPos - lastSpeedCheckPos).Magnitude / dt
+                end
+                lastSpeedCheckPos = myPos
+                lastSpeedCheckTime = now
+            end
 
             -- Match State Check (Passively ON at all times)
             local prog = getMatchProgress()
@@ -1158,6 +1597,21 @@ task.spawn(function()
             -- ================================================================
             --  [HIGHWAY COMBAT ENGINE] (Main or Full Swarm Mode)
             -- ================================================================
+            -- Staging Wait Guard for Main
+            if isMain then
+                local pG = LocalPlayer:FindFirstChild("PlayerGui")
+                local qG = pG and pG:FindFirstChild("queueGui")
+                local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
+                if sBtn or qG then
+                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    if not allReady then
+                        hum:MoveTo(myPos)
+                        task.wait(0.1)
+                        continue
+                    end
+                end
+            end
+
             local qTool, eTool = getAbilityTools()
             local qCd = getToolCooldown(qTool)
             local eCd = getToolCooldown(eTool)
@@ -1187,11 +1641,23 @@ task.spawn(function()
                         infoLbl.Text = "⚡ Holding Platform Edge (Tree Priority Lock)"
 
                         currentIndex = 701
-                        if qReady then lastQTime = now castSlot("q", qTool) end
-                        if eReady then lastETime = now castSlot("e", eTool) end
+
+                        if qReady then
+                            lastQTime = now
+                            castSlot("q", qTool)
+                        end
+                        if eReady then
+                            lastETime = now
+                            castSlot("e", eTool)
+                        end
+
                         task.wait(0.02)
                         continue
                     elseif distToBoss <= 500.0 then
+                        statusLbl.Text = string.format("● STATUS: 🏃 RUSHING TO TREE PLATFORM (%.1fs)", distToBoss)
+                        statusLbl.TextColor3 = Color3.fromRGB(255, 180, 80)
+                        infoLbl.Text = "🌲 Bypassing Waypoints -> Moving to Platform Edge"
+
                         hum:MoveTo(TREE_PLATFORM_EDGE)
                         task.wait(0.02)
                         continue
@@ -1199,11 +1665,13 @@ task.spawn(function()
                 else
                     local n = bossModel.Name:lower()
                     local isDragon = (n:find("dragon") ~= nil)
-                    if isDragon then
-                        if distToBoss <= 130.0 and qReady then lastQTime = now castSlot("q", qTool) end
-                        local isInsideArena = (currentIndex >= 980) or (myPos.X <= -1180.0)
+                    local isInsideArena = (currentIndex >= 960) or (myPos.X <= -1160.0)
 
-                        if isInsideArena and distToBoss <= 85.0 then
+                    -- Only engage Dragon once actually inside the Arena (never waste Q through walls in pre-boss corridor!)
+                    if isDragon and isInsideArena then
+                        if distToBoss <= 130.0 and qReady then lastQTime = now castSlot("q", qTool) end
+
+                        if distToBoss <= 85.0 then
                             hum:MoveTo(myPos)
                             local lookDir = Vector3.new(bossPos.X - myPos.X, 0, bossPos.Z - myPos.Z).Unit
                             hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
@@ -1301,6 +1769,86 @@ task.spawn(function()
                     currentIndex = math.max(closestIdx, minWpFloor)
                     targetPoint = waypoints[currentIndex]
                     targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                end
+
+                -- Anti-Stall Force-Motion Watchdog: Detects if character is not moving while supposed to sprint/march
+                if currentMoveSpeed < 2.0 then
+                    stuckDuration = stuckDuration + 0.02
+                    if stuckDuration >= 1.2 and (now - lastUnstuckActionTime) >= 1.0 then
+                        lastUnstuckActionTime = now
+                        hum.Jump = true -- Force jump over obstacles
+                        
+                        -- Force advance waypoint or nudge position to break collision hitch
+                        if stuckDuration >= 2.0 then
+                            currentIndex = math.min(currentIndex + 2, #waypoints)
+                            targetPoint = waypoints[currentIndex]
+                            targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                            stuckDuration = 0
+                            print(string.format("[%s ⚠️] Anti-Stall: Speed was 0 -> Forced Jump & Waypoint Advance to %d", LocalPlayer.Name, currentIndex))
+                        else
+                            local nudgeOffset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
+                            hum:MoveTo(targetPos + nudgeOffset)
+                        end
+                    end
+                else
+                    stuckDuration = 0
+                end
+
+                -- Pre-Boss Room Geometric Stall Watchdog (Instant Fast-Replay)
+                if isInsidePreBossZone(myPos, currentIndex, treeKilled) then
+                    if currentMoveSpeed < 2.5 then
+                        preBossStuckDuration = preBossStuckDuration + 0.02
+                        if preBossStuckDuration >= 2.5 then
+                            preBossStuckDuration = 0
+                            print(string.format("[%s ⚠️] Pre-Boss Stall Detected at WP %d (Speed: %.1f studs/s) -> Instantly Fast-Replaying Match!", LocalPlayer.Name, currentIndex, currentMoveSpeed))
+                            statusLbl.Text = "● STATUS: ⚠️ PRE-BOSS STALL DETECTED! Fast-Replaying..."
+                            statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
+                            infoLbl.Text = "🔄 Pre-Boss Room corner hang detected -> Instantly replaying..."
+                            
+                            task.spawn(executeSafeAutoSell)
+                            task.wait(0.3)
+                            
+                            if isMain then
+                                local data = { dungeonName = "Enchanted Forest", dungeonProgress = "bossKilled", hardcore = Config.HardcoreMode or false }
+                                if replayRemote then
+                                    pcall(function() replayRemote:FireServer() end)
+                                    pcall(function() replayRemote:FireServer(data) end)
+                                end
+                                if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                                triggerMainStartDungeon()
+                            else
+                                if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                            end
+
+                            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                            if pg then
+                                for _, btn in ipairs(pg:GetDescendants()) do
+                                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                        local bName = btn.Name:lower()
+                                        local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                                        if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready")
+                                            or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") then
+                                            pcall(function()
+                                                for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                                for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+
+                            currentIndex = 1
+                            treeKilled = false
+                            minWpFloor = 1
+                            altSpawnOrigin = nil
+                            task.wait(1.5)
+                            continue
+                        end
+                    else
+                        preBossStuckDuration = 0
+                    end
+                else
+                    preBossStuckDuration = 0
                 end
 
                 if distToWp <= 3.5 then
