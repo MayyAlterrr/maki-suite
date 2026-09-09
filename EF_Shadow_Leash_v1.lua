@@ -206,23 +206,29 @@ local function getMatchProgress()
     local dProg = Workspace:FindFirstChild("dungeonProgress")
     if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
         local v = dProg.Value:lower()
-        if v:find("victory") or v:find("complete") or v:find("bosskilled") or v:find("defeat") or v:find("failed") or v:find("loss") then
-            return v
+        if v:find("victory") or v:find("complete") or v:find("bosskilled") then
+            return "victory"
+        elseif v:find("defeat") or v:find("failed") or v:find("loss") or v:find("timeout") then
+            return "defeat"
         end
     end
     local timeLeft = Workspace:FindFirstChild("timeLeft")
-    if timeLeft and timeLeft:IsA("NumberValue") and timeLeft.Value <= 0.5 then
+    if timeLeft and timeLeft:IsA("NumberValue") and timeLeft.Value <= 0.5 and timeLeft.Value >= 0 then
         return "defeat"
     end
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
-        local fail = pG:FindFirstChild("DUNGEON FAILED", true) or pG:FindFirstChild("Defeat", true) or pG:FindFirstChild("RetryVote", true)
-        if fail and ((fail:IsA("GuiObject") and fail.Visible) or (fail:IsA("ScreenGui") and fail.Enabled)) then
-            return "defeat"
+        for _, guiName in ipairs({"DUNGEON FAILED", "Defeat", "RetryVote", "defeatGui", "failGui", "GameOver", "Summary"}) do
+            local fail = pG:FindFirstChild(guiName, true)
+            if fail and ((fail:IsA("GuiObject") and fail.Visible) or (fail:IsA("ScreenGui") and fail.Enabled)) then
+                return "defeat"
+            end
         end
-        local vic = pG:FindFirstChild("DUNGEON COMPLETE", true) or pG:FindFirstChild("DungeonComplete", true) or pG:FindFirstChild("Victory", true)
-        if vic and ((vic:IsA("GuiObject") and vic.Visible) or (vic:IsA("ScreenGui") and vic.Enabled)) then
-            return "victory"
+        for _, guiName in ipairs({"DUNGEON COMPLETE", "DungeonComplete", "Victory", "victoryGui", "RewardGui", "winGui"}) do
+            local vic = pG:FindFirstChild(guiName, true)
+            if vic and ((vic:IsA("GuiObject") and vic.Visible) or (vic:IsA("ScreenGui") and vic.Enabled)) then
+                return "victory"
+            end
         end
     end
     return "active"
@@ -1562,7 +1568,7 @@ task.spawn(function()
             end
 
             -- ================================================================
-            --  [ALT SHADOW LEASH ENGINE] (Alts Dynamically Mirror Main)
+            --  [ALT SHADOW LEASH ENGINE] (Main-Anchored Detection & Tight Flank)
             -- ================================================================
             if not isMain then
                 local mainPlayer = Config.CarryUsername and #Config.CarryUsername > 0 and Players:FindFirstChild(Config.CarryUsername)
@@ -1578,15 +1584,11 @@ task.spawn(function()
                 local qReady = (qTool ~= nil) and ((qCd <= 0.1) or ((now - lastQTime) >= math.max(0.8, qLength)))
                 local eReady = (eTool ~= nil) and ((eCd <= 0.1) or ((now - lastETime) >= math.max(0.5, eLength)))
 
-                -- Target scan for Alt
-                local bossModel, bossHum, bossRoot, isTreeChasmBoss = findBossOrTree()
-                local enemies, _ = scanLivingEnemies(currentIndex)
-                local targetGroup = getTargetGroup(enemies, myPos)
-
                 if mainHrp and mainHum and mainHum.Health > 0 then
-                    local distToMain = (myPos - mainHrp.Position).Magnitude
+                    local mainPos = mainHrp.Position
+                    local distToMain = (myPos - mainPos).Magnitude
 
-                    -- Compute gentle formation spread around Main
+                    -- Compute tight shoulder-to-shoulder formation offset around Main
                     local altSlotIndex = 1
                     if Config.AltUsernames then
                         for idx, aName in ipairs(Config.AltUsernames) do
@@ -1597,16 +1599,16 @@ task.spawn(function()
                         end
                     end
                     local angle = (altSlotIndex * (2 * math.pi / math.max(1, #(Config.AltUsernames or {1}))))
-                    local lateralOffset = Vector3.new(math.cos(angle) * 3.5, 0, math.sin(angle) * 3.5)
-                    local followDestination = mainHrp.Position + lateralOffset
+                    local lateralOffset = Vector3.new(math.cos(angle) * 2.5, 0, math.sin(angle) * 2.5)
+                    local followDestination = mainPos + lateralOffset
 
-                    -- Alt Movement to Main
-                    if distToMain > 6.0 then
+                    -- Alt Movement: Always step right up to Main's shoulder line
+                    if distToMain > 3.5 then
                         hum:MoveTo(followDestination)
                         statusLbl.Text = string.format("● STATUS: 🏃 SHADOWING MAIN (%.1fs)", distToMain)
                         statusLbl.TextColor3 = Color3.fromRGB(100, 200, 255)
-                        infoLbl.Text = string.format("👥 Leashed to %s (Dist: %.1fs)", Config.CarryUsername, distToMain)
-                        wpLbl.Text = string.format("📍 FOLLOWING MAIN (%s)", Config.CarryUsername)
+                        infoLbl.Text = string.format("👥 Stepping up to %s (Dist: %.1fs)", Config.CarryUsername, distToMain)
+                        wpLbl.Text = string.format("📍 LEASHED TO %s", Config.CarryUsername)
                         if qReady then
                             lastQTime = now
                             castSlot("q", qTool)
@@ -1619,17 +1621,22 @@ task.spawn(function()
                         wpLbl.Text = string.format("📍 IN FORMATION WITH %s", Config.CarryUsername)
                     end
 
-                    -- Synchronized Boss / Tree Combat for Alt
+                    -- Target Scan ANCHORED to Main's Position (Exact same strike distance as Main!)
+                    local bossModel, bossHum, bossRoot, isTreeChasmBoss = findBossOrTree()
+                    local enemies, _ = scanLivingEnemies(currentIndex)
+                    local targetGroup = getTargetGroup(enemies, mainPos) -- Measured from MAIN!
+
+                    -- Synchronized Boss / Tree Combat for Alt (Mirroring Main's distance)
                     if bossModel and bossHum and bossRoot and bossHum.Health > 0 then
                         local bossPos = bossRoot.Position
-                        local distToBoss = (myPos - bossPos).Magnitude
-                        if (isTreeChasmBoss and distToBoss <= 120.0) or (not isTreeChasmBoss and distToBoss <= 85.0) then
+                        local distFromMainToBoss = (mainPos - bossPos).Magnitude
+                        if (isTreeChasmBoss and distFromMainToBoss <= 120.0) or (not isTreeChasmBoss and distFromMainToBoss <= 85.0) then
                             local lookDir = Vector3.new(bossPos.X - myPos.X, 0, bossPos.Z - myPos.Z).Unit
                             hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
                             if qReady then lastQTime = now castSlot("q", qTool) end
                             if eReady then lastETime = now castSlot("e", eTool) end
                         end
-                    -- Synchronized Mob Group Combat for Alt
+                    -- Synchronized Mob Group Combat for Alt (Triggered when Main reaches strike line)
                     elseif targetGroup and targetGroup.nearestDist <= 85.0 then
                         local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
                         hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
@@ -1966,3 +1973,62 @@ task.spawn(function()
 end)
 
 print(string.format("[Project Maki 🌲] EF-Combine Master loaded for %s (%s)!", LocalPlayer.Name, isMain and "Main Host" or "Swarm Alt"))
+
+
+-- Dedicated Bulletproof Auto-Retry & Match Result Watcher (Runs on both Victory and Defeat/Timeout)
+task.spawn(function()
+    while _G.MAKI_EF_SHADOW_RUNNING do
+        task.wait(0.3)
+        if isDungeon() and Config.AutoRetryInfinite then
+            local prog = getMatchProgress()
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local hasDefeatScreen = false
+            local hasVictoryScreen = false
+
+            if pG then
+                for _, desc in ipairs(pG:GetDescendants()) do
+                    if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Visible then
+                        local t = desc.Text:lower()
+                        if t:find("defeat") or t:find("failed") or t:find("game over") or t:find("try again") then
+                            hasDefeatScreen = true
+                        elseif t:find("victory") or t:find("complete") or t:find("rewards") then
+                            hasVictoryScreen = true
+                        end
+                    end
+                end
+            end
+
+            if prog == "defeat" or prog == "failed" or prog == "victory" or prog == "complete" or prog == "bosskilled" or hasDefeatScreen or hasVictoryScreen then
+                -- 1. Click all possible Replay / Retry / Restart / Ready / Vote buttons in PlayerGui
+                if pG then
+                    for _, btn in ipairs(pG:GetDescendants()) do
+                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                            local bName = btn.Name:lower()
+                            local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                            if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready") or bName:find("playagain") or bName:find("vote")
+                                or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") or bText:find("play again") or bText:find("vote") then
+                                pcall(function()
+                                    for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                    for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                end)
+                            end
+                        end
+                    end
+                end
+
+                -- 2. Fire remotes for Main and Alts
+                if isMain then
+                    local data = { dungeonName = "Enchanted Forest", dungeonProgress = (prog == "defeat" or hasDefeatScreen) and "failed" or "bossKilled", hardcore = Config.HardcoreMode or false }
+                    if replayRemote then
+                        pcall(function() replayRemote:FireServer() end)
+                        pcall(function() replayRemote:FireServer(data) end)
+                    end
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                    triggerMainStartDungeon()
+                else
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                end
+            end
+        end
+    end
+end)
