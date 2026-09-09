@@ -1578,18 +1578,22 @@ task.spawn(function()
             -- ================================================================
             --  [HIGHWAY COMBAT ENGINE] (Main or Full Swarm Mode)
             -- ================================================================
-            -- Staging Wait Guard for Main
-            if isMain then
-                local pG = LocalPlayer:FindFirstChild("PlayerGui")
-                local qG = pG and pG:FindFirstChild("queueGui")
-                local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
-                if sBtn or qG then
+            -- Staging Room Pre-Start Guard (Main & Swarm Alts hold at spawn until gate opens)
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local qG = pG and pG:FindFirstChild("queueGui")
+            local sBtn = (pG and pG:FindFirstChild("startButton")) or (qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true))
+            if sBtn or qG then
+                if isMain then
                     local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
                     if not allReady then
                         hum:MoveTo(myPos)
                         task.wait(0.1)
                         continue
                     end
+                else
+                    hum:MoveTo(myPos)
+                    task.wait(0.1)
+                    continue
                 end
             end
 
@@ -1687,6 +1691,20 @@ task.spawn(function()
                 print(string.format("[%s 🛡️] Respawn/Checkpoint Recovery: Synced to Waypoint %d / %d (Dist: %.1fs)", LocalPlayer.Name, currentIndex, #waypoints, cDist))
             end
             lastPosBeforeTick = myPos
+
+            -- Swarm Lag / Desync Catch-up (Alts sync highway progress with Main)
+            if not isMain and not Config.SoloCarryMode and Config.CarryUsername and #Config.CarryUsername > 0 then
+                local mainPlr = Players:FindFirstChild(Config.CarryUsername)
+                local mainChar = mainPlr and mainPlr.Character
+                local mainHrp = mainChar and mainChar:FindFirstChild("HumanoidRootPart")
+                if mainHrp then
+                    local distToMain = (myPos - mainHrp.Position).Magnitude
+                    if distToMain > 35.0 then
+                        local closestIdx, _ = findClosestWaypointIndex(myPos, waypoints, minWpFloor)
+                        currentIndex = math.max(closestIdx, minWpFloor)
+                    end
+                end
+            end
 
             local targetPoint = waypoints[currentIndex] or waypoints[#waypoints]
             local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
