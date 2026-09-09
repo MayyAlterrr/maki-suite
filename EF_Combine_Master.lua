@@ -1366,20 +1366,33 @@ local function areAllAltsInDungeon()
         return true, 0, 0
     end
 
-    local loadedCount = 0
+    -- 1. Find all configured alts that are currently connected / in the server
+    local activeAlts = {}
     for _, altName in ipairs(altList) do
         local p = Players:FindFirstChild(altName)
         if p then
-            local char = p.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                getLivePlayerLevel(altName)
-                loadedCount = loadedCount + 1
-            end
+            table.insert(activeAlts, p)
         end
     end
 
-    return (loadedCount >= #altList), loadedCount, #altList
+    -- If no configured alts are currently in the server, start immediately (Solo)
+    if #activeAlts == 0 then
+        return true, 0, 0
+    end
+
+    -- 2. Verify all online/active alts have loaded characters in the dungeon
+    local loadedCount = 0
+    for _, p in ipairs(activeAlts) do
+        local char = p.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            getLivePlayerLevel(p.Name)
+            loadedCount = loadedCount + 1
+        end
+    end
+
+    local allReady = (loadedCount >= #activeAlts)
+    return allReady, loadedCount, #activeAlts
 end
 
 local function instantAcceptAndDestroyPopup(gui)
@@ -1502,17 +1515,22 @@ task.spawn(function()
                         end
                     end
 
-                    -- Check if ALL configured alts are inside the dungeon with loaded characters
-                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    -- Check if ALL ONLINE/ACTIVE alts are inside the dungeon with loaded characters
+                    local allReady, loadedCount, activeTotal = areAllAltsInDungeon()
                     if allReady then
-                        statusLbl.Text = "● STATUS: 👑 ALL ALTS IN DUNGEON! STARTING..."
+                        if activeTotal > 0 then
+                            statusLbl.Text = string.format("● STATUS: 👑 ALL ACTIVE ALTS (%d/%d) READY! STARTING...", loadedCount, activeTotal)
+                            infoLbl.Text = string.format("🚀 All %d Active Alts Inside Dungeon -> Starting Match!", activeTotal)
+                        else
+                            statusLbl.Text = "● STATUS: 👑 SOLO READY! STARTING MATCH..."
+                            infoLbl.Text = "🚀 Solo Run -> Starting Match!"
+                        end
                         statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
-                        infoLbl.Text = string.format("🚀 All %d Alts Inside Dungeon -> Starting Match!", totalAlts)
                         triggerMainStartDungeon()
                     else
-                        statusLbl.Text = string.format("● STATUS: ⏳ WAITING FOR ALTS (%d/%d IN DUNGEON)", loadedCount, totalAlts)
+                        statusLbl.Text = string.format("● STATUS: ⏳ WAITING FOR ALTS (%d/%d READY)", loadedCount, activeTotal)
                         statusLbl.TextColor3 = Color3.fromRGB(255, 200, 80)
-                        infoLbl.Text = string.format("👥 Waiting for all %d configured alts to enter before starting...", totalAlts)
+                        infoLbl.Text = string.format("👥 Waiting for all %d active alts to load into the dungeon...", activeTotal)
                     end
                 else
                     -- Alt: Ready up and click ready buttons
