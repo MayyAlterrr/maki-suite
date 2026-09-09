@@ -1075,7 +1075,7 @@ task.spawn(function()
             if targetGroup then
                 targetLbl.Text = string.format("🎯 Group: %s (%d mobs)", targetGroup.frontMob.model.Name, targetGroup.count)
 
-                -- [SAFETY GUARD: 85s AGGRO THRESHOLD] If abilities (E) are NOT ready, HOLD at safe distance (>= 85 studs)
+                -- [SAFETY GUARD: 85s AGGRO THRESHOLD] If E is NOT ready, HOLD at safe distance (>= 85 studs)
                 -- Prevents any single mob in the pack from crossing the 71-stud chain aggro boundary!
                 if targetGroup.nearestDist <= 85.0 and not eReady then
                     hum:MoveTo(myPos)
@@ -1092,13 +1092,13 @@ task.spawn(function()
                     continue
                 end
 
-                -- Pre-cast Q when approaching pack within 110 studs (Speed & Damage Buff!)
+                -- [STAGE 1: APPROACH PRE-BUFF] Pre-cast Q at 85-110 studs for +80% Speed & +80% Damage Amplification
                 if targetGroup.farthestDist <= 110.0 and qReady then
                     lastQTime = now
                     castSlot("q", qTool)
                 end
 
-                -- The exact moment farthest mob is <= 82 studs -> PAUSE ON HIGHWAY & WIPE GROUP!
+                -- [STAGE 2: BURST STRIKE] When farthest mob is <= 82 studs -> PAUSE & CONSUME BUFF WITH E WIPE!
                 if targetGroup.farthestDist <= 82.0 then
                     hum:MoveTo(myPos)
                     local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
@@ -1106,15 +1106,20 @@ task.spawn(function()
 
                     statusLbl.Text = string.format("● STATUS: 💥 100%% GROUP 1-SHOT (%d mobs)", targetGroup.count)
                     statusLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
-                    infoLbl.Text = string.format("⚡ Farthest Mob at %.1fs -> 100%% Full Group Wipe!", targetGroup.farthestDist)
+                    infoLbl.Text = string.format("⚡ Farthest Mob at %.1fs -> E AoE Wipe (+80%% Q Buff)", targetGroup.farthestDist)
 
-                    if qReady then lastQTime = now castSlot("q", qTool) end
-                    if eReady then lastETime = now castSlot("e", eTool) end
+                    if eReady then
+                        lastETime = now
+                        castSlot("e", eTool)
+                    elseif qReady then
+                        lastQTime = now
+                        castSlot("q", qTool)
+                    end
                 else
-                    -- Advance smoothly down highway towards pack
+                    -- Advance smoothly down highway towards pack using Q speed buff
                     statusLbl.Text = string.format("● STATUS: ⚔️ MARCHING TO 82s AoE ZONE (%.1fs)", targetGroup.farthestDist)
                     statusLbl.TextColor3 = Color3.fromRGB(120, 220, 255)
-                    infoLbl.Text = string.format("🏃 Moving into 82s strike zone (Q Active)")
+                    infoLbl.Text = string.format("🏃 Sprinting into 82s strike zone (+80%% Q Buff active)")
 
                     if distToWp <= 3.5 then
                         currentIndex = currentIndex + 1
