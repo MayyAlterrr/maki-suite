@@ -1310,7 +1310,7 @@ end
 task.spawn(function()
     while _G.MAKI_EF_COMBINE_RUNNING do
         task.wait(0.3)
-        if isDungeon() then
+        if isDungeon() and not _G.EF_MATCH_IN_PROGRESS then
             local prog = getMatchProgress()
             local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "")
             local pG = LocalPlayer:FindFirstChild("PlayerGui")
@@ -1420,11 +1420,11 @@ task.spawn(function()
     end
 end)
 
-local function isInsidePreBossZone(myPos, currentWp, treeDead)
-    if not treeDead or currentWp < 800 or currentWp > 960 then
-        return false
+local function isInsidePreBossZone(myPos, currentWp)
+    if currentWp and currentWp >= 800 and currentWp <= 955 then
+        return true
     end
-    if myPos.X <= -840.0 and myPos.X >= -1130.0 and myPos.Z >= 535.0 and myPos.Z <= 675.0 and myPos.Y <= 4.0 then
+    if myPos and myPos.X <= -840.0 and myPos.X >= -1130.0 and myPos.Z >= 535.0 and myPos.Z <= 675.0 then
         return true
     end
     return false
@@ -1788,35 +1788,20 @@ task.spawn(function()
                     targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
                 end
 
-                -- Anti-Stall Force-Motion Watchdog: Detects if character is not moving while supposed to sprint/march
-                if currentMoveSpeed < 2.0 then
-                    stuckDuration = stuckDuration + 0.02
-                    if stuckDuration >= 1.2 and (now - lastUnstuckActionTime) >= 1.0 then
-                        lastUnstuckActionTime = now
-                        hum.Jump = true -- Force jump over obstacles
-                        
-                        -- Force advance waypoint or nudge position to break collision hitch
-                        if stuckDuration >= 2.0 then
-                            currentIndex = math.min(currentIndex + 2, #waypoints)
-                            targetPoint = waypoints[currentIndex]
-                            targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                            stuckDuration = 0
-                            print(string.format("[%s ⚠️] Anti-Stall: Speed was 0 -> Forced Jump & Waypoint Advance to %d", LocalPlayer.Name, currentIndex))
-                        else
-                            local nudgeOffset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
-                            hum:MoveTo(targetPos + nudgeOffset)
-                        end
-                    end
-                else
-                    stuckDuration = 0
+                if currentIndex >= 15 then
+                    _G.EF_MATCH_IN_PROGRESS = true
                 end
 
+                local isInPreBoss = isInsidePreBossZone(myPos, currentIndex)
+
                 -- Pre-Boss Room Geometric Stall Watchdog (Instant Fast-Replay)
-                if isInsidePreBossZone(myPos, currentIndex, treeKilled) then
+                if isInPreBoss then
+                    stuckDuration = 0 -- Silence general anti-stall nudges in Pre-Boss room!
                     if currentMoveSpeed < 2.5 then
                         preBossStuckDuration = preBossStuckDuration + 0.02
-                        if preBossStuckDuration >= 2.5 then
+                        if preBossStuckDuration >= 2.0 then
                             preBossStuckDuration = 0
+                            _G.EF_MATCH_IN_PROGRESS = false
                             print(string.format("[%s ⚠️] Pre-Boss Stall Detected at WP %d (Speed: %.1f studs/s) -> Instantly Fast-Replaying Match!", LocalPlayer.Name, currentIndex, currentMoveSpeed))
                             statusLbl.Text = "● STATUS: ⚠️ PRE-BOSS STALL DETECTED! Fast-Replaying..."
                             statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
@@ -1866,6 +1851,29 @@ task.spawn(function()
                     end
                 else
                     preBossStuckDuration = 0
+
+                    -- Anti-Stall Force-Motion Watchdog: Detects if character is not moving while supposed to sprint/march
+                    if currentMoveSpeed < 2.0 then
+                        stuckDuration = stuckDuration + 0.02
+                        if stuckDuration >= 1.2 and (now - lastUnstuckActionTime) >= 1.0 then
+                            lastUnstuckActionTime = now
+                            hum.Jump = true -- Force jump over obstacles
+                            
+                            -- Force advance waypoint or nudge position to break collision hitch
+                            if stuckDuration >= 2.0 then
+                                currentIndex = math.min(currentIndex + 2, #waypoints)
+                                targetPoint = waypoints[currentIndex]
+                                targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                                stuckDuration = 0
+                                print(string.format("[%s ⚠️] Anti-Stall: Speed was 0 -> Forced Jump & Waypoint Advance to %d", LocalPlayer.Name, currentIndex))
+                            else
+                                local nudgeOffset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
+                                hum:MoveTo(targetPos + nudgeOffset)
+                            end
+                        end
+                    else
+                        stuckDuration = 0
+                    end
                 end
 
                 if distToWp <= 3.5 then
