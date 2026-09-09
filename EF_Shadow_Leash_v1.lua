@@ -204,23 +204,9 @@ end
 
 local function getMatchProgress()
     local dProg = Workspace:FindFirstChild("dungeonProgress")
-    if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
-        local v = dProg.Value:lower()
-        if v:find("victory") or v:find("complete") or v:find("bosskilled") then
-            return "victory"
-        elseif v:find("defeat") or v:find("failed") or v:find("loss") then
-            return "defeat"
-        end
-    end
-    local timeLeft = Workspace:FindFirstChild("timeLeft")
-    if timeLeft and timeLeft:IsA("NumberValue") and timeLeft.Value <= 0.1 and timeLeft.Value >= 0 and _G.EF_MATCH_IN_PROGRESS then
-        return "defeat"
-    end
-    return "active"
+    return (dProg and dProg:IsA("StringValue")) and dProg.Value:lower() or "active"
 end
 
--- Discord Webhook Notifier
-local httpReq = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
 local function sendDiscordWebhook(embed)
     if not Config.DiscordWebhookUrl or #Config.DiscordWebhookUrl == 0 or not httpReq then return end
     task.spawn(function()
@@ -1498,57 +1484,79 @@ task.spawn(function()
                 lastSpeedCheckTime = now
             end
 
-            -- Match State Check (Passively ON at all times)
+            -- ================================================================
+            --  [MATCH STATE & REPLAY HANDLER] (Exact 1:1 Progression Master v4.0)
+            -- ================================================================
             local prog = getMatchProgress()
-            if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "defeat" or prog == "failed" then
-                if prog == "defeat" or prog == "failed" then
-                    statusLbl.Text = "● STATUS: ⚠️ DEFEAT / TIMEOUT! Fast-Retrying..."
-                    statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
-                    infoLbl.Text = "🔄 Instantly Requesting Match Replay..."
-                else
-                    statusLbl.Text = "● STATUS: 🏆 VICTORY! Fast Drop Sync & Replay..."
-                    statusLbl.TextColor3 = Color3.fromRGB(100, 255, 120)
-                    infoLbl.Text = "⚡ Fast Auto-Sell and Replay Loop Active"
-                    task.spawn(executeSafeAutoSell)
-                end
-
-                task.wait(1.5)
+            if prog == "bosskilled" or prog == "victory" or prog == "complete" then
+                statusLbl.Text = "● STATUS: 🏆 VICTORY! Fast Drop Sync & Replay..."
+                statusLbl.TextColor3 = Color3.fromRGB(100, 255, 120)
+                infoLbl.Text = "⚡ Fast Auto-Sell and Replay Loop Active"
+                task.spawn(executeSafeAutoSell)
 
                 if isMain then
-                    local data = { dungeonName = "Enchanted Forest", dungeonProgress = "bossKilled", hardcore = Config.HardcoreMode or false }
-                    if replayRemote then
-                        pcall(function() replayRemote:FireServer() end)
-                        pcall(function() replayRemote:FireServer(data) end)
-                    end
+                    task.wait(2.0)
+                    if replayRemote then pcall(function() replayRemote:FireServer() end) end
                     if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
-                    triggerMainStartDungeon()
                 else
-                    task.wait(1.0)
+                    task.wait(2.5)
                     if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
                 end
 
                 local pg = LocalPlayer:FindFirstChild("PlayerGui")
                 if pg then
-                    for _, btn in ipairs(pg:GetDescendants()) do
-                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
-                            local bName = btn.Name:lower()
-                            local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
-                            if bName:find("replay") or bName:find("retry") or bName:find("restart") or bName:find("ready")
-                                or bText:find("replay") or bText:find("retry") or bText:find("restart") or bText:find("ready") then
-                                pcall(function()
-                                    for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                                    for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-                                end)
-                            end
+                    for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay", "startButton", "ready"}) do
+                        local btn = pg:FindFirstChild(btnName, true)
+                        if btn and btn:IsA("GuiButton") and btn.Visible then
+                            pcall(function()
+                                for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                            end)
                         end
                     end
                 end
 
+                _G.EF_MATCH_IN_PROGRESS = false
                 currentIndex = 1
                 treeKilled = false
                 minWpFloor = 1
-                altSpawnOrigin = nil
-                task.wait(1.5)
+                task.wait(2.0)
+                continue
+            end
+
+            if prog == "defeat" or prog == "failed" or prog == "gameover" or prog == "loss" then
+                statusLbl.Text = "● STATUS: ⚠️ DEFEAT / TIMEOUT! Retrying..."
+                statusLbl.TextColor3 = Color3.fromRGB(255, 120, 80)
+                infoLbl.Text = "🔄 Instantly Requesting Match Replay in-place..."
+                task.spawn(executeSafeAutoSell)
+
+                if isMain then
+                    task.wait(2.0)
+                    if replayRemote then pcall(function() replayRemote:FireServer() end) end
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                else
+                    task.wait(2.5)
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                end
+
+                local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                if pg then
+                    for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay"}) do
+                        local btn = pg:FindFirstChild(btnName, true)
+                        if btn and btn:IsA("GuiButton") and btn.Visible then
+                            pcall(function()
+                                for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                            end)
+                        end
+                    end
+                end
+
+                _G.EF_MATCH_IN_PROGRESS = false
+                currentIndex = 1
+                treeKilled = false
+                minWpFloor = 1
+                task.wait(2.0)
                 continue
             end
 
