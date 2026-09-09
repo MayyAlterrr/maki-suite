@@ -674,75 +674,6 @@ local function getTargetGroup(enemies, myPos)
 end
 
 -- ========================================================================
---  [MODULE] 1:1 LIVE ALT DETECTION & MULTI-TIER LEVEL SCRAPER
--- ========================================================================
-local function getLivePlayerLevel(playerName)
-    if not playerName or #playerName == 0 then return nil end
-    local pG = LocalPlayer:FindFirstChild("PlayerGui")
-
-    -- 1. Check Party Status UI
-    local statusFrame = pG and pG:FindFirstChild("playerStatus")
-    local tHolder = statusFrame and statusFrame:FindFirstChild("teammateHolder", true)
-    local pCard = tHolder and tHolder:FindFirstChild(playerName)
-    local lvlLbl = pCard and pCard:FindFirstChild("level", true)
-    if lvlLbl and tonumber(lvlLbl.Text) and tonumber(lvlLbl.Text) > 0 then
-        local lvl = tonumber(lvlLbl.Text)
-        Config.AltLevels[playerName] = lvl
-        return lvl
-    end
-
-    -- 2. Check Leaderboard GUI
-    local lb = pG and pG:FindFirstChild("leaderboard")
-    local lbCard = lb and lb:FindFirstChild(playerName, true)
-    local lbLvl = lbCard and lbCard:FindFirstChild("level", true)
-    if lbLvl and tonumber(lbLvl.Text) and tonumber(lbLvl.Text) > 0 then
-        local lvl = tonumber(lbLvl.Text)
-        Config.AltLevels[playerName] = lvl
-        return lvl
-    end
-
-    -- 3. Check Player leaderstats / playerData
-    local p = Players:FindFirstChild(playerName)
-    if p then
-        local ls = p:FindFirstChild("leaderstats")
-        local lVal = ls and (ls:FindFirstChild("Level") or ls:FindFirstChild("level"))
-        if lVal and tonumber(lVal.Value) and tonumber(lVal.Value) > 0 then
-            local lvl = tonumber(lVal.Value)
-            Config.AltLevels[playerName] = lvl
-            return lvl
-        end
-        local pData = p:FindFirstChild("playerData") or p:FindFirstChild("Data")
-        local pLvl = pData and (pData:FindFirstChild("Level") or pData:FindFirstChild("level"))
-        if pLvl and tonumber(pLvl.Value) and tonumber(pLvl.Value) > 0 then
-            local lvl = tonumber(pLvl.Value)
-            Config.AltLevels[playerName] = lvl
-            return lvl
-        end
-    end
-
-    -- 4. Check Cached Config
-    if Config.AltLevels and Config.AltLevels[playerName] and Config.AltLevels[playerName] > 0 then
-        return Config.AltLevels[playerName]
-    end
-
-    return 175
-end
-
-local function getAltStatus(altName)
-    local p = Players:FindFirstChild(altName)
-    local liveLvl = getLivePlayerLevel(altName) or (Config.AltLevels and Config.AltLevels[altName]) or 175
-    local char = p and p.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if p and hrp then
-        return true, liveLvl, "🟢 In Dungeon (Loaded)"
-    elseif p then
-        return true, liveLvl, "🟡 In Server (Loading)"
-    else
-        return false, liveLvl, "⚪ In Lobby / Offline"
-    end
-end
-
--- ========================================================================
 --  MASTER GUI (EF-COMBINE MASTER)
 -- ========================================================================
 local pGuiRef = LocalPlayer:WaitForChild("PlayerGui")
@@ -821,8 +752,6 @@ pageDiscord.Position = UDim2.new(0, 8, 0, 64)
 pageDiscord.BackgroundTransparency = 1
 pageDiscord.Visible = false
 
-local updateAltsTracker = nil
-
 local function switchTab(targetPage, targetBtn)
     for _, p in ipairs(pagesFolder:GetChildren()) do p.Visible = false end
     targetPage.Visible = true
@@ -831,9 +760,6 @@ local function switchTab(targetPage, targetBtn)
             btn.BackgroundColor3 = (btn == targetBtn) and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(25, 35, 50)
             btn.TextColor3 = (btn == targetBtn) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 165, 185)
         end
-    end
-    if targetPage == pageAlts and updateAltsTracker then
-        updateAltsTracker()
     end
 end
 
@@ -1029,35 +955,14 @@ altsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 local altsListLayout = Instance.new("UIListLayout", altsScroll)
 altsListLayout.Padding = UDim.new(0, 4)
 
-updateAltsTracker = function()
-    local altList = Config.AltUsernames or {}
-    btnAlts.Text = string.format("👥 ALTS (%d)", #altList)
-    
+local function updateAltsTracker()
+    btnAlts.Text = string.format("👥 ALTS (%d)", #Config.AltUsernames)
     for _, c in ipairs(altsScroll:GetChildren()) do
-        if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
+        if c:IsA("Frame") then c:Destroy() end
     end
-
-    if #altList == 0 then
-        local emptyCard = Instance.new("Frame", altsScroll)
-        emptyCard.Size = UDim2.new(1, 0, 0, 64)
-        emptyCard.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
-        Instance.new("UICorner", emptyCard).CornerRadius = UDim.new(0, 5)
-
-        local emptyLbl = Instance.new("TextLabel", emptyCard)
-        emptyLbl.Size = UDim2.new(1, -16, 1, 0)
-        emptyLbl.Position = UDim2.new(0, 8, 0, 0)
-        emptyLbl.BackgroundTransparency = 1
-        emptyLbl.Font = Enum.Font.Gotham
-        emptyLbl.TextSize = 8
-        emptyLbl.TextColor3 = Color3.fromRGB(140, 165, 195)
-        emptyLbl.TextWrapped = true
-        emptyLbl.Text = "ℹ️ No Alts configured yet.\nEnter an Alt's exact Roblox username above and click ➕ ADD ALT."
-        return
-    end
-
-    for idx, altName in ipairs(altList) do
+    for idx, altName in ipairs(Config.AltUsernames) do
         local row = Instance.new("Frame", altsScroll)
-        row.Size = UDim2.new(1, 0, 0, 26)
+        row.Size = UDim2.new(1, 0, 0, 24)
         row.BackgroundColor3 = Color3.fromRGB(18, 25, 38)
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
 
@@ -1070,21 +975,20 @@ updateAltsTracker = function()
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
         local nameLbl = Instance.new("TextLabel", row)
-        nameLbl.Size = UDim2.new(0.48, -16, 1, 0)
-        nameLbl.Position = UDim2.new(0, 18, 0, 0)
+        nameLbl.Size = UDim2.new(0.48, -20, 1, 0)
+        nameLbl.Position = UDim2.new(0, 20, 0, 0)
         nameLbl.BackgroundTransparency = 1
-        nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.Font = Enum.Font.Gotham
         nameLbl.TextSize = 8
-        nameLbl.TextColor3 = isOnline and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(175, 185, 200)
+        nameLbl.TextColor3 = isOnline and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 150, 165)
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
         nameLbl.Text = string.format("%d. %s", idx, altName)
 
         local lvlBadge = Instance.new("TextLabel", row)
         lvlBadge.Size = UDim2.new(0.24, 0, 0, 16)
         lvlBadge.Position = UDim2.new(0.48, 4, 0.5, -8)
         lvlBadge.BackgroundColor3 = isOnline and Color3.fromRGB(30, 70, 110) or Color3.fromRGB(25, 35, 45)
-        lvlBadge.TextColor3 = isOnline and Color3.fromRGB(0, 210, 255) or Color3.fromRGB(140, 150, 165)
+        lvlBadge.TextColor3 = isOnline and Color3.fromRGB(0, 210, 255) or Color3.fromRGB(120, 130, 145)
         lvlBadge.Font = Enum.Font.GothamBold
         lvlBadge.TextSize = 7.5
         lvlBadge.Text = string.format("Lv %d", liveLvl or 175)
@@ -1107,7 +1011,6 @@ updateAltsTracker = function()
         end)
     end
 end
-updateAltsTracker()
 
 local function handleAddAltEF()
     local text = (altInput.Text or ""):gsub("%s+", "")
@@ -1185,6 +1088,75 @@ local function mainCreateAndLaunch()
     else
         task.wait(2.0)
         isCreatingLobby = false
+    end
+end
+
+-- ========================================================================
+--  [MODULE] 1:1 LIVE ALT DETECTION & MULTI-TIER LEVEL SCRAPER
+-- ========================================================================
+local function getLivePlayerLevel(playerName)
+    if not playerName or #playerName == 0 then return nil end
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+
+    -- 1. Check Party Status UI
+    local statusFrame = pG and pG:FindFirstChild("playerStatus")
+    local tHolder = statusFrame and statusFrame:FindFirstChild("teammateHolder", true)
+    local pCard = tHolder and tHolder:FindFirstChild(playerName)
+    local lvlLbl = pCard and pCard:FindFirstChild("level", true)
+    if lvlLbl and tonumber(lvlLbl.Text) and tonumber(lvlLbl.Text) > 0 then
+        local lvl = tonumber(lvlLbl.Text)
+        Config.AltLevels[playerName] = lvl
+        return lvl
+    end
+
+    -- 2. Check Leaderboard GUI
+    local lb = pG and pG:FindFirstChild("leaderboard")
+    local lbCard = lb and lb:FindFirstChild(playerName, true)
+    local lbLvl = lbCard and lbCard:FindFirstChild("level", true)
+    if lbLvl and tonumber(lbLvl.Text) and tonumber(lbLvl.Text) > 0 then
+        local lvl = tonumber(lbLvl.Text)
+        Config.AltLevels[playerName] = lvl
+        return lvl
+    end
+
+    -- 3. Check Player leaderstats / playerData
+    local p = Players:FindFirstChild(playerName)
+    if p then
+        local ls = p:FindFirstChild("leaderstats")
+        local lVal = ls and (ls:FindFirstChild("Level") or ls:FindFirstChild("level"))
+        if lVal and tonumber(lVal.Value) and tonumber(lVal.Value) > 0 then
+            local lvl = tonumber(lVal.Value)
+            Config.AltLevels[playerName] = lvl
+            return lvl
+        end
+        local pData = p:FindFirstChild("playerData") or p:FindFirstChild("Data")
+        local pLvl = pData and (pData:FindFirstChild("Level") or pData:FindFirstChild("level"))
+        if pLvl and tonumber(pLvl.Value) and tonumber(pLvl.Value) > 0 then
+            local lvl = tonumber(pLvl.Value)
+            Config.AltLevels[playerName] = lvl
+            return lvl
+        end
+    end
+
+    -- 4. Check Cached Config
+    if Config.AltLevels and Config.AltLevels[playerName] and Config.AltLevels[playerName] > 0 then
+        return Config.AltLevels[playerName]
+    end
+
+    return 175
+end
+
+local function getAltStatus(altName)
+    local p = Players:FindFirstChild(altName)
+    local liveLvl = getLivePlayerLevel(altName) or (Config.AltLevels and Config.AltLevels[altName]) or 175
+    local char = p and p.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if p and hrp then
+        return true, liveLvl, "🟢 In Dungeon (Loaded)"
+    elseif p then
+        return true, liveLvl, "🟡 In Server (Loading)"
+    else
+        return false, liveLvl, "⚪ In Lobby / Offline"
     end
 end
 
