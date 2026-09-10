@@ -1,9 +1,8 @@
 -- ========================================================================
---  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.2
---  - Next-Gen Artificial Potential Field (APF) Vector Evasion & Tactical Kiting
+--  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.3
+--  - RenderStepped Synchronous APF Vector Physics Steering (Zero Stutter, 60 FPS)
 --  - Dual-Phase Navigation: Highway Transit (>65 studs) -> Combat Standoff (<=65 studs)
 --  - 100% Native Physics: Zero collision tampering, zero speed manipulation
---  - Full Humanoid:Move(dir, false) sprint fluidity: 0 deceleration, 0 stutter
 --  - Absolute Standoff Guard (50-60 studs): NEVER walks into melee range!
 --  - Seamless Motion Combat: Fires Q and E while continuously sprinting & orbiting
 --  - Methodical Multi-Hit Pack Clearing: kites safely while abilities recharge
@@ -14,6 +13,10 @@
 --  - Potato Mode (60 FPS stabilizer) + Safe Auto-Sell + Auto-Replay + Draggable HUD
 -- ========================================================================
 
+if _G.NL_CLEANUP then
+    pcall(_G.NL_CLEANUP)
+    _G.NL_CLEANUP = nil
+end
 if _G.NL_RESTORE_POTATO then
     pcall(_G.NL_RESTORE_POTATO)
     _G.NL_RESTORE_POTATO = nil
@@ -82,6 +85,9 @@ local runsCompleted = 0
 local bossHitsLanded = 0
 local lastQCastTime = 0
 local lastECastTime = 0
+local currentPhaseText = "Phase: Initializing..."
+local currentStatusText = "Status: APF Engine Ready"
+local currentStatusColor = Color3.fromRGB(100, 220, 255)
 
 local Q_BUFF_DURATION = 4.0
 
@@ -490,7 +496,7 @@ local function runSafeAutoSell()
 
     if soldCount > 0 then
         sellRemote:FireServer(payload)
-        print(string.format("[NL Master v1.2] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
+        print(string.format("[NL Master v1.3] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
     end
     return soldCount, keptCount
 end
@@ -542,7 +548,7 @@ verLabel.Name = "VerLabel"
 verLabel.Size = UDim2.new(1, 0, 0, 14)
 verLabel.Position = UDim2.new(0, 0, 0, 22)
 verLabel.BackgroundTransparency = 1
-verLabel.Text = "v1.2 (TAS Dual-Phase Engine)"
+verLabel.Text = "v1.3 (TAS RenderStepped Engine)"
 verLabel.Font = Enum.Font.GothamMedium
 verLabel.TextSize = 9
 verLabel.TextColor3 = Color3.fromRGB(120, 190, 255)
@@ -552,7 +558,7 @@ phaseLabel.Name = "PhaseLabel"
 phaseLabel.Size = UDim2.new(1, -16, 0, 18)
 phaseLabel.Position = UDim2.new(0, 8, 0, 40)
 phaseLabel.BackgroundTransparency = 1
-phaseLabel.Text = "Phase: Initializing..."
+phaseLabel.Text = currentPhaseText
 phaseLabel.Font = Enum.Font.GothamBold
 phaseLabel.TextSize = 11
 phaseLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -563,10 +569,10 @@ statusLabel.Name = "StatusLabel"
 statusLabel.Size = UDim2.new(1, -16, 0, 18)
 statusLabel.Position = UDim2.new(0, 8, 0, 58)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Status: APF Engine Ready"
+statusLabel.Text = currentStatusText
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextSize = 10
-statusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
+statusLabel.TextColor3 = currentStatusColor
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 local cdLabel = Instance.new("TextLabel", hudFrame)
@@ -591,7 +597,6 @@ statsLabel.TextSize = 10
 statsLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 statsLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Buttons
 local toggleBtn = Instance.new("TextButton", hudFrame)
 toggleBtn.Name = "ToggleBtn"
 toggleBtn.Size = UDim2.new(0.5, -12, 0, 28)
@@ -647,7 +652,6 @@ sellNowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 sellNowBtn.Text = "SELL JUNK NOW"
 Instance.new("UICorner", sellNowBtn).CornerRadius = UDim.new(0, 5)
 
--- Draggable Logic
 local dragging = false
 local dragStart = nil
 local startPos = nil
@@ -762,7 +766,7 @@ local BOSS_NAMES = {
     ["Odin Reincarnation"] = true
 }
 
-local PACK_CLUSTER_THRESHOLD = 35 -- studs
+local PACK_CLUSTER_THRESHOLD = 35
 
 local function checkAutoStart()
     local started = Workspace:FindFirstChild("dungeonStarted")
@@ -955,273 +959,257 @@ local function getActiveSafeDome(myPos)
     end
     if safe then
         local p = safe:IsA("BasePart") and safe or safe:FindFirstChildWhichIsA("BasePart")
-        if p then
-            return p.Position
-        end
+        if p then return p.Position end
     end
     return nil
 end
 
 -- ========================================================================
--- 7. THE MASTER APF PHYSICS & COMBAT CONTROL LOOP
+-- 7. THE MASTER RENDERSTEPPED SYNCHRONOUS APF PHYSICS & COMBAT STEERING
 -- ========================================================================
-task.spawn(function()
-    while _G.NL_AUTOFARM_RUNNING do
-        RunService.Heartbeat:Wait()
-        if not isRunning or isReplaying then continue end
+local renderConnection = nil
 
-        local char = LocalPlayer.Character
-        local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hrp or not hum or hum.Health <= 0 then continue end
+renderConnection = RunService.RenderStepped:Connect(function(dt)
+    if not _G.NL_AUTOFARM_RUNNING or not isRunning or isReplaying then
+        pcall(function()
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:Move(Vector3.zero, false) end
+        end)
+        return
+    end
 
-        local myPos = hrp.Position
-        local now = tick()
+    local char = LocalPlayer.Character
+    local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
 
-        checkAutoStart()
+    local myPos = hrp.Position
 
-        -- Update HUD Timers & Stats
-        local elapsed = math.floor(now - startTime)
-        local mins = math.floor(elapsed / 60)
-        local secs = elapsed % 60
-        statsLabel.Text = string.format("Runs: %d | Time: %02d:%02d", runsCompleted, mins, secs)
-
-        local qCd = getQCDRemaining()
-        local eCd = getECDRemaining()
-        local buffActive = isQBuffActive()
-        local qStr = buffActive and "Q: BUFFED (+80%)" or ((qCd <= 0.05) and "Q: Ready" or string.format("Q: %.1fs", qCd))
-        local eStr = (eCd <= 0.05) and "E: Ready" or string.format("E: %.1fs", eCd)
-        cdLabel.Text = string.format("%s | %s", qStr, eStr)
-        if (buffActive or qCd <= 0.05) and eCd <= 0.05 then
-            cdLabel.TextColor3 = Color3.fromRGB(80, 255, 140)
+    -- 1. Highway Waypoint Tracking
+    if totalWps > 0 then
+        local distToCurrent = waypoints[currentWpIndex] and (waypoints[currentWpIndex] - myPos).Magnitude or 999999
+        if distToCurrent > 80 then
+            currentWpIndex = findClosestWaypointIndex(myPos, 1, totalWps)
         else
-            cdLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
-        end
-
-        -- Update Highway Tracking Index
-        if totalWps > 0 then
-            local distToCurrent = waypoints[currentWpIndex] and (waypoints[currentWpIndex] - myPos).Magnitude or 999999
-            if distToCurrent > 80 then
-                currentWpIndex = findClosestWaypointIndex(myPos, 1, totalWps)
-            else
-                local searchStart = math.max(1, currentWpIndex - 3)
-                local searchEnd = math.min(totalWps, currentWpIndex + 25)
-                local bestIdx = currentWpIndex
-                local bestDist = 999999
-                for i = searchStart, searchEnd do
-                    local wp = waypoints[i]
-                    if wp then
-                        local d = (wp - myPos).Magnitude
-                        if d < bestDist then
-                            bestDist = d
-                            bestIdx = i
-                        end
+            local searchStart = math.max(1, currentWpIndex - 3)
+            local searchEnd = math.min(totalWps, currentWpIndex + 25)
+            local bestIdx = currentWpIndex
+            local bestDist = 999999
+            for i = searchStart, searchEnd do
+                local wp = waypoints[i]
+                if wp then
+                    local d = (wp - myPos).Magnitude
+                    if d < bestDist then
+                        bestDist = d
+                        bestIdx = i
                     end
                 end
-                currentWpIndex = bestIdx
             end
-
-            if waypoints[currentWpIndex] and (waypoints[currentWpIndex] - myPos).Magnitude < 14 then
-                currentWpIndex = math.min(totalWps, currentWpIndex + 1)
-            end
+            currentWpIndex = bestIdx
         end
 
-        local target = getTargetCluster(myPos)
-        local lookaheadIdx = math.min(totalWps, currentWpIndex + 5)
-        local targetWp = waypoints[lookaheadIdx] or waypoints[currentWpIndex]
-        local inCombatRange = target and (target.dist <= 65.0)
+        if waypoints[currentWpIndex] and (waypoints[currentWpIndex] - myPos).Magnitude < 14 then
+            currentWpIndex = math.min(totalWps, currentWpIndex + 1)
+        end
+    end
 
-        -- ================================================================
-        -- ARTIFICIAL POTENTIAL FIELD (APF) FORCE VECTOR SYNTHESIS
-        -- ================================================================
-        local F_goal = Vector3.zero
-        local F_hazard = Vector3.zero
-        local F_predict = Vector3.zero
-        local F_orbit = Vector3.zero
-        local F_separation = Vector3.zero
-        local inHazardEscape = false
+    local target = getTargetCluster(myPos)
+    local lookaheadIdx = math.min(totalWps, currentWpIndex + 5)
+    local targetWp = waypoints[lookaheadIdx] or waypoints[currentWpIndex]
+    local inCombatRange = target and (target.dist <= 65.0)
 
-        -- 1. F_goal: Sprints strictly along Highway during Transit (> 65 studs or no target)
-        if not inCombatRange then
-            if targetWp then
-                local toWp = Vector3.new(targetWp.X - myPos.X, 0, targetWp.Z - myPos.Z)
-                if toWp.Magnitude > 0.1 then
-                    F_goal = toWp.Unit * 2.0
-                end
+    -- 2. APF Force Vector Synthesis
+    local F_goal = Vector3.zero
+    local F_hazard = Vector3.zero
+    local F_predict = Vector3.zero
+    local F_orbit = Vector3.zero
+    local F_separation = Vector3.zero
+    local inHazardEscape = false
+
+    -- Highway Transit Force (Only active when NOT in combat standoff range!)
+    if not inCombatRange then
+        if targetWp then
+            local toWp = Vector3.new(targetWp.X - myPos.X, 0, targetWp.Z - myPos.Z)
+            if toWp.Magnitude > 0.1 then
+                F_goal = toWp.Unit * 2.0
             end
         end
+    end
 
-        -- 2. F_hazard: Active indicators, projectiles & safe zones
-        local safeDomePos = getActiveSafeDome(myPos)
-        if safeDomePos then
-            local toSafe = Vector3.new(safeDomePos.X - myPos.X, 0, safeDomePos.Z - myPos.Z)
-            if toSafe.Magnitude > 4 then
-                F_hazard = toSafe.Unit * 6.0
+    -- Hazard Repulsion
+    local safeDomePos = getActiveSafeDome(myPos)
+    if safeDomePos then
+        local toSafe = Vector3.new(safeDomePos.X - myPos.X, 0, safeDomePos.Z - myPos.Z)
+        if toSafe.Magnitude > 4 then
+            F_hazard = toSafe.Unit * 6.0
+            inHazardEscape = true
+            currentStatusText = "Status: RETREATING TO SAFE DOME!"
+            currentStatusColor = Color3.fromRGB(0, 255, 180)
+        end
+    else
+        local activeHazards = scanActiveHazards(myPos, 65)
+        for _, h in ipairs(activeHazards) do
+            local toHazard = Vector3.new(myPos.X - h.pos.X, 0, myPos.Z - h.pos.Z)
+            local distH = toHazard.Magnitude
+            local safeDist = h.radius + 4.5
+
+            if distH < safeDist then
                 inHazardEscape = true
-                statusLabel.Text = "Status: RETREATING TO SAFE DOME!"
-                statusLabel.TextColor3 = Color3.fromRGB(0, 255, 180)
-            end
-        else
-            local activeHazards = scanActiveHazards(myPos, 65)
-            for _, h in ipairs(activeHazards) do
-                local toHazard = Vector3.new(myPos.X - h.pos.X, 0, myPos.Z - h.pos.Z)
-                local distH = toHazard.Magnitude
-                local safeDist = h.radius + 4.5
-
-                if distH < safeDist then
-                    inHazardEscape = true
-                    local exitDir = distH > 0.1 and toHazard.Unit or Vector3.new(1, 0, 0)
-                    local exitForce = 4.0 + (safeDist - distH) * 0.6
-                    F_hazard = F_hazard + exitDir * exitForce
-                elseif distH < (safeDist + 16.0) then
-                    local warnDir = toHazard.Unit
-                    local decay = (safeDist + 16.0 - distH) / 16.0
-                    local tangent = Vector3.new(-warnDir.Z, 0, warnDir.X)
-                    F_hazard = F_hazard + (warnDir * 1.0 + tangent * 1.5) * decay
-                end
+                local exitDir = distH > 0.1 and toHazard.Unit or Vector3.new(1, 0, 0)
+                local exitForce = 4.0 + (safeDist - distH) * 0.6
+                F_hazard = F_hazard + exitDir * exitForce
+            elseif distH < (safeDist + 16.0) then
+                local warnDir = toHazard.Unit
+                local decay = (safeDist + 16.0 - distH) / 16.0
+                local tangent = Vector3.new(-warnDir.Z, 0, warnDir.X)
+                F_hazard = F_hazard + (warnDir * 1.0 + tangent * 1.5) * decay
             end
         end
+    end
 
-        -- 3. F_predict: Proactive lateral windup avoidance (Spearman thrust cone, Mage beam)
-        if inCombatRange and not inHazardEscape then
-            local nearbyMobs = target.isBoss and {target} or (target.mobs or {})
-            for _, m in ipairs(nearbyMobs) do
-                local mHrp = m.hrp
-                local mHum = m.hum
-                if mHrp and mHum then
-                    local d = (Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
-                    if d <= 55 then
-                        local isAttacking = false
-                        pcall(function()
-                            local anim = mHum:FindFirstChildOfClass("Animator")
-                            if anim then
-                                for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
-                                    local tName = track.Name:lower()
-                                    if tName:find("attack") or tName:find("spear") or tName:find("slash") or tName:find("cast") or tName:find("thrust") then
-                                        isAttacking = true
-                                        break
-                                    end
+    -- Proactive Lateral Windup Prediction
+    if inCombatRange and not inHazardEscape then
+        local nearbyMobs = target.isBoss and {target} or (target.mobs or {})
+        for _, m in ipairs(nearbyMobs) do
+            local mHrp = m.hrp
+            local mHum = m.hum
+            if mHrp and mHum then
+                local d = (Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
+                if d <= 55 then
+                    local isAttacking = false
+                    pcall(function()
+                        local anim = mHum:FindFirstChildOfClass("Animator")
+                        if anim then
+                            for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+                                local tName = track.Name:lower()
+                                if tName:find("attack") or tName:find("spear") or tName:find("slash") or tName:find("cast") or tName:find("thrust") then
+                                    isAttacking = true
+                                    break
                                 end
                             end
-                        end)
+                        end
+                    end)
 
-                        if isAttacking then
-                            local look = mHrp.CFrame.LookVector
-                            local toPlayer = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z)).Unit
-                            if look:Dot(toPlayer) > 0.4 then
-                                local right = mHrp.CFrame.RightVector
-                                local lateral = (toPlayer:Dot(right) >= 0) and right or -right
-                                F_predict = F_predict + Vector3.new(lateral.X, 0, lateral.Z).Unit * 3.0
-                            end
+                    if isAttacking then
+                        local look = mHrp.CFrame.LookVector
+                        local toPlayer = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z)).Unit
+                        if look:Dot(toPlayer) > 0.4 then
+                            local right = mHrp.CFrame.RightVector
+                            local lateral = (toPlayer:Dot(right) >= 0) and right or -right
+                            F_predict = F_predict + Vector3.new(lateral.X, 0, lateral.Z).Unit * 3.0
                         end
                     end
                 end
             end
         end
+    end
 
-        -- 4. F_separation & F_orbit: TACTICAL STANDOFF KITING GUARD (<= 65 studs)
-        if inCombatRange then
-            local centroid = target.centerPos
-            local toCentroid = Vector3.new(centroid.X - myPos.X, 0, centroid.Z - myPos.Z)
-            local distC = toCentroid.Magnitude
-            local idealStandoff = target.isBoss and 62.0 or 54.0
+    -- Tactical Standoff & Orbital Kiting Guard (<= 65 studs)
+    if inCombatRange then
+        local centroid = target.centerPos
+        local toCentroid = Vector3.new(centroid.X - myPos.X, 0, centroid.Z - myPos.Z)
+        local distC = toCentroid.Magnitude
+        local idealStandoff = target.isBoss and 62.0 or 54.0
 
-            if target.isBoss and target.name == "Bob The Frost Giant" then
-                idealStandoff = 66.0
-            end
-
-            -- RETREAT FORCE: If closer than ideal standoff, back away smoothly!
-            if distC < idealStandoff then
-                local retreatDir = -toCentroid.Unit
-                local severity = (idealStandoff - distC) / 15.0
-                local retreatPower = 2.5 + severity * 2.5
-                F_separation = retreatDir * retreatPower
-            end
-
-            -- TANGENTIAL ORBIT: Smooth circular glide around mob centroid
-            local radial = -toCentroid.Unit
-            local tangent = Vector3.new(-radial.Z, 0, radial.X)
-            F_orbit = tangent * 2.0
+        if target.isBoss and target.name == "Bob The Frost Giant" then
+            idealStandoff = 66.0
         end
 
-        -- ================================================================
-        -- OPPORTUNISTIC MOTION COMBAT GATING (Q BUFF + E DETONATION)
-        -- ================================================================
-        if target then
-            local dist = target.dist
+        if distC < idealStandoff then
+            local retreatDir = -toCentroid.Unit
+            local severity = (idealStandoff - distC) / 15.0
+            local retreatPower = 2.5 + severity * 2.5
+            F_separation = retreatDir * retreatPower
+        end
 
-            -- Pre-buff Q on the run at <= 115 studs
-            if dist <= 115 and isQReady() then
-                castQ()
-            end
+        local radial = -toCentroid.Unit
+        local tangent = Vector3.new(-radial.Z, 0, radial.X)
+        F_orbit = tangent * 2.0
+    end
 
-            -- Strike E condition:
-            if not inHazardEscape and dist >= 38 and dist <= 72 and isEReady() then
-                if not isQBuffActive() and isQReady() then
-                    castQ()
-                    task.wait(0.08)
-                end
-
-                if isQBuffActive() then
-                    local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
-                    hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
-                    castE()
-
-                    if target.isBoss then
-                        bossHitsLanded = bossHitsLanded + 1
-                    end
-                end
-            end
-        elseif isQReady() then
+    -- 3. Opportunistic Motion Combat (Q Buff + E Detonation)
+    if target then
+        local dist = target.dist
+        if dist <= 115 and isQReady() then
             castQ()
         end
 
-        -- ================================================================
-        -- CONTINUOUS NATIVE VELOCITY EXECUTION (Humanoid:Move)
-        -- ================================================================
-        local V_composite = F_goal * 1.0 + F_hazard * 1.0 + F_predict * 1.0 + F_separation * 1.0 + F_orbit * 1.0
-
-        if inHazardEscape then
-            phaseLabel.Text = "EVADING: Critical Hazard Area"
-            statusLabel.Text = "Status: Vector Field SDF Evasion"
-            statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        elseif inCombatRange then
-            if target.isBoss then
-                phaseLabel.Text = string.format("BOSS: %s (%.0f studs)", target.name, target.dist)
-                statusLabel.Text = string.format("Status: Standoff Kiting (E CD: %.1fs)", eCd)
-            else
-                phaseLabel.Text = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count, target.dist)
-                statusLabel.Text = string.format("Status: Standoff Kiting & Herding (E CD: %.1fs)", eCd)
+        if not inHazardEscape and dist >= 38 and dist <= 72 and isEReady() then
+            if not isQBuffActive() and isQReady() then
+                castQ()
             end
-            statusLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
-        else
-            if target then
-                phaseLabel.Text = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count or 1, target.dist)
-                statusLabel.Text = string.format("Status: Approaching Pack (wp %d)", currentWpIndex)
-                statusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
-            else
-                phaseLabel.Text = string.format("Highway %d/%d", currentWpIndex, totalWps)
-                statusLabel.Text = string.format("Status: Native Sprint Transit (wp %d)", currentWpIndex)
-                statusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
+
+            if isQBuffActive() then
+                local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
+                castE()
+                if target.isBoss then
+                    bossHitsLanded = bossHitsLanded + 1
+                end
             end
         end
+    elseif isQReady() then
+        castQ()
+    end
 
-        local vHoriz = Vector3.new(V_composite.X, 0, V_composite.Z)
-        if vHoriz.Magnitude > 0.05 then
-            hum.AutoRotate = true
-            hum:Move(vHoriz.Unit, false)
+    -- 4. Status and Phase updates
+    local eCd = getECDRemaining()
+    if inHazardEscape then
+        currentPhaseText = "EVADING: Critical Hazard Area"
+        currentStatusText = "Status: Vector Field SDF Evasion"
+        currentStatusColor = Color3.fromRGB(255, 80, 80)
+    elseif inCombatRange then
+        if target.isBoss then
+            currentPhaseText = string.format("BOSS: %s (%.0f studs)", target.name, target.dist)
+            currentStatusText = string.format("Status: Standoff Kiting (E CD: %.1fs)", eCd)
         else
-            hum:Move(Vector3.zero, false)
+            currentPhaseText = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count, target.dist)
+            currentStatusText = string.format("Status: Standoff Kiting & Herding (E CD: %.1fs)", eCd)
         end
+        currentStatusColor = Color3.fromRGB(0, 220, 255)
+    else
+        if target then
+            currentPhaseText = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count or 1, target.dist)
+            currentStatusText = string.format("Status: Approaching Pack (wp %d)", currentWpIndex)
+            currentStatusColor = Color3.fromRGB(100, 220, 255)
+        else
+            currentPhaseText = string.format("Highway %d/%d", currentWpIndex, totalWps)
+            currentStatusText = string.format("Status: Native Sprint Transit (wp %d)", currentWpIndex)
+            currentStatusColor = Color3.fromRGB(120, 220, 255)
+        end
+    end
 
-        if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 2.5 then
-            hum.Jump = true
-        end
+    -- 5. Native Humanoid:Move Execution
+    local V_composite = F_goal * 1.0 + F_hazard * 1.0 + F_predict * 1.0 + F_separation * 1.0 + F_orbit * 1.0
+    local vHoriz = Vector3.new(V_composite.X, 0, V_composite.Z)
+    if vHoriz.Magnitude > 0.05 then
+        hum.AutoRotate = true
+        hum:Move(vHoriz.Unit, false)
+    else
+        hum:Move(Vector3.zero, false)
+    end
+
+    if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 2.5 then
+        hum.Jump = true
     end
 end)
 
+local function cleanupEngine()
+    if renderConnection then
+        renderConnection:Disconnect()
+        renderConnection = nil
+    end
+    pcall(function()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum:Move(Vector3.zero, false) end
+    end)
+end
+_G.NL_CLEANUP = cleanupEngine
+
 -- ========================================================================
--- 8. AUTO-REPLAY & DUNGEON RESET ENGINE
+-- 8. SLOW BACKGROUND LOOP (HUD, AUTO-START, AUTO-REPLAY)
 -- ========================================================================
 local function getDungeonFinished()
     local dung = Workspace:FindFirstChild("dungeon")
@@ -1264,13 +1252,36 @@ end
 
 task.spawn(function()
     while _G.NL_AUTOFARM_RUNNING do
-        task.wait(0.5)
-        if not autoReplay or isReplaying then continue end
+        task.wait(0.15)
+        checkAutoStart()
 
-        if getDungeonFinished() then
+        -- Update HUD Labels
+        phaseLabel.Text = currentPhaseText
+        statusLabel.Text = currentStatusText
+        statusLabel.TextColor3 = currentStatusColor
+
+        local elapsed = math.floor(tick() - startTime)
+        local mins = math.floor(elapsed / 60)
+        local secs = elapsed % 60
+        statsLabel.Text = string.format("Runs: %d | Time: %02d:%02d", runsCompleted, mins, secs)
+
+        local qCd = getQCDRemaining()
+        local eCd = getECDRemaining()
+        local buffActive = isQBuffActive()
+        local qStr = buffActive and "Q: BUFFED (+80%)" or ((qCd <= 0.05) and "Q: Ready" or string.format("Q: %.1fs", qCd))
+        local eStr = (eCd <= 0.05) and "E: Ready" or string.format("E: %.1fs", eCd)
+        cdLabel.Text = string.format("%s | %s", qStr, eStr)
+        if (buffActive or qCd <= 0.05) and eCd <= 0.05 then
+            cdLabel.TextColor3 = Color3.fromRGB(80, 255, 140)
+        else
+            cdLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+        end
+
+        -- Victory & Auto-Replay
+        if autoReplay and not isReplaying and getDungeonFinished() then
             isReplaying = true
             runsCompleted = runsCompleted + 1
-            print(string.format("[NL Master v1.2] Dungeon Victory detected! Total runs: %d", runsCompleted))
+            print(string.format("[NL Master v1.3] Dungeon Victory detected! Total runs: %d", runsCompleted))
 
             for sec = 5, 1, -1 do
                 if not _G.NL_AUTOFARM_RUNNING or not autoReplay then break end
@@ -1309,7 +1320,7 @@ task.spawn(function()
             local replayRemote = remotes and remotes:FindFirstChild("replayDungeon")
             if replayRemote then
                 replayRemote:FireServer(data)
-                print("[NL Master v1.2] Fired replayDungeon:FireServer successfully!")
+                print("[NL Master v1.3] Fired replayDungeon:FireServer successfully!")
             end
 
             for _ = 1, 30 do
@@ -1321,7 +1332,7 @@ task.spawn(function()
             bossHitsLanded = 0
             isReplaying = false
             startTime = tick()
-            print("[NL Master v1.2] Dungeon reset confirmed! Restarting run loop...")
+            print("[NL Master v1.3] Dungeon reset confirmed! Restarting run loop...")
         end
     end
 end)
@@ -1331,10 +1342,10 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     local hrp = newChar:WaitForChild("HumanoidRootPart", 10)
     if hrp then
         currentWpIndex = findClosestWaypointIndex(hrp.Position, 1, totalWps)
-        print(string.format("[NL Master v1.2] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
+        print(string.format("[NL Master v1.3] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
     end
 end)
 
 print("========================================================================")
-print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.2 successfully loaded!")
+print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.3 successfully loaded!")
 print("========================================================================")
