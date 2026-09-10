@@ -102,6 +102,7 @@ local treeSpawnDetected = false
 local treeHitsLanded = 0
 local shortcutActive = false
 local shortcutIdx = 1
+local room5ShortcutDone = false
 
 -- Room 5 Bump Bypass Channel: skirts around the left side of the platform bump to Room 6 door
 local SHORTCUT_POINTS = {
@@ -1314,9 +1315,19 @@ task.spawn(function()
             treeHitsLanded = 0
             shortcutActive = false
             shortcutIdx = 1
+            room5ShortcutDone = false
         end
 
-        local inRoom5Shortcut = treeKilledThisRun and myPos.Z < 505 and myPos.X < -630
+        local inRoom5Shortcut = treeKilledThisRun and not room5ShortcutDone and myPos.Z < 504 and myPos.X < -630
+        local target = getTargetCluster(myPos)
+
+        -- If we can already see Room 6 mobs and are near the doorway, finish shortcut immediately!
+        if target and target.room == "room6" and myPos.Z >= 480 then
+            room5ShortcutDone = true
+            inRoom5Shortcut = false
+            shortcutActive = false
+            currentWpIndex = findClosestWaypointIndex(myPos, 760, 810)
+        end
 
         checkAutoStart()
 
@@ -1366,9 +1377,6 @@ task.spawn(function()
             end
         end
 
-        -- Resolve Target
-        local target = getTargetCluster(myPos)
-
         if inRoom5Shortcut then
             -- Anti-stuck watchdog: hop over any lip or bump automatically
             if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 3 then
@@ -1395,25 +1403,30 @@ task.spawn(function()
                     shortcutIdx = shortcutIdx + 1
                     targetPt = SHORTCUT_POINTS[shortcutIdx]
                 else
-                    currentWpIndex = 621
+                    room5ShortcutDone = true
                     shortcutActive = false
+                    currentWpIndex = findClosestWaypointIndex(myPos, 760, 810)
+                    print(string.format("[EF Master] Room 5 bump bypass complete! Resumed at highway wp %d", currentWpIndex))
                 end
             end
 
-            phaseLabel.Text = string.format("Phase: Bypass Bump (%d/%d)", shortcutIdx, #SHORTCUT_POINTS)
-            statusLabel.Text = string.format("Status: Skirting Bump to Room 6 (%.0f studs)", (targetPt - myPos).Magnitude)
-            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 200)
+            if not room5ShortcutDone then
+                phaseLabel.Text = string.format("Phase: Bypass Bump (%d/%d)", shortcutIdx, #SHORTCUT_POINTS)
+                statusLabel.Text = string.format("Status: Skirting Bump to Room 6 (%.0f studs)", (targetPt - myPos).Magnitude)
+                statusLabel.TextColor3 = Color3.fromRGB(0, 255, 200)
 
-            hum.AutoRotate = true
-            if isQReady() then
-                castQ()
-            end
-            smoothMoveTo(hum, targetPt)
+                hum.AutoRotate = true
+                if isQReady() then
+                    castQ()
+                end
+                smoothMoveTo(hum, targetPt)
 
-            if (myPos - SHORTCUT_POINTS[#SHORTCUT_POINTS]).Magnitude <= 14 or myPos.Z >= 504 then
-                currentWpIndex = 621
-                shortcutActive = false
-                print("[EF Master] Room 5 bump bypass complete! Entering Room 6.")
+                if (myPos - SHORTCUT_POINTS[#SHORTCUT_POINTS]).Magnitude <= 14 or myPos.Z >= 504 then
+                    room5ShortcutDone = true
+                    shortcutActive = false
+                    currentWpIndex = findClosestWaypointIndex(myPos, 760, 810)
+                    print(string.format("[EF Master] Room 5 bump bypass complete! Resumed at highway wp %d", currentWpIndex))
+                end
             end
         elseif target then
             if target.isBoss then
@@ -1631,6 +1644,9 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 
         local snapIdx = findClosestWaypointIndex(hrp.Position, 1, totalWps)
         currentWpIndex = snapIdx
+        room5ShortcutDone = false
+        shortcutActive = false
+        shortcutIdx = 1
         print(string.format("[EF Master v1.3] Respawned at %s, resumed at highway wp %d/%d", tostring(hrp.Position), currentWpIndex, totalWps))
     end
 end)
@@ -1748,6 +1764,7 @@ task.spawn(function()
             treeHitsLanded = 0
             shortcutActive = false
             shortcutIdx = 1
+            room5ShortcutDone = false
             bossHitsLanded = 0
             startTime = tick()
             isCastingCombo = false
