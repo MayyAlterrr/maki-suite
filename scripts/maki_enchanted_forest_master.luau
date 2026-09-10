@@ -116,8 +116,10 @@ local SHORTCUT_POINTS = {
     Vector3.new(-837.5, -24.5, 505.1)
 }
 
+local Q_BUFF_DURATION = 4.0 -- User specified: Q passive buff (+80% damage and sprint) lasts 4.0s
+
 local function isQBuffActive()
-    return (tick() - lastQCastTime) < 4.5
+    return (tick() - lastQCastTime) < Q_BUFF_DURATION
 end
 
 local function smoothMoveTo(hum, targetPos)
@@ -1467,33 +1469,44 @@ task.spawn(function()
                         local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
                         hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
 
-                        if isEReady() then
-                            isCastingCombo = true
-                            statusLabel.Text = "Status: Striking Boss with E!"
-                            statusLabel.TextColor3 = Color3.fromRGB(255, 60, 180)
+                        local eReady = isEReady()
+                        local qBuff = isQBuffActive()
+                        local qReady = isQReady()
 
-                            if not isQBuffActive() and isQReady() then
+                        if eReady then
+                            -- Guarantee Q buff is active before striking boss
+                            if not qBuff and qReady then
                                 castQ()
-                                task.wait(0.08)
+                                task.wait(0.12)
+                                qBuff = isQBuffActive()
                             end
 
-                            lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
-                            hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
+                            if qBuff then
+                                isCastingCombo = true
+                                statusLabel.Text = "Status: Striking Boss with Q Buff + E!"
+                                statusLabel.TextColor3 = Color3.fromRGB(255, 60, 180)
 
-                            castE()
-                            bossHitsLanded = bossHitsLanded + 1
-                            if isTree then
-                                treeHitsLanded = treeHitsLanded + 1
-                                if target.hum and target.hum.Health <= 0 then
-                                    treeKilledThisRun = true
-                                    print("[EF Master] Ancient Enchanted Tree killed by E strike!")
+                                lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                                hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
+
+                                castE()
+                                bossHitsLanded = bossHitsLanded + 1
+                                if isTree then
+                                    treeHitsLanded = treeHitsLanded + 1
+                                    if target.hum and target.hum.Health <= 0 then
+                                        treeKilledThisRun = true
+                                        print("[EF Master] Ancient Enchanted Tree killed by E strike!")
+                                    end
                                 end
-                            end
 
-                            statusLabel.Text = string.format("Status: Boss Hit #%d! Holding ground.", bossHitsLanded)
-                            statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-                            task.wait(0.6)
-                            isCastingCombo = false
+                                statusLabel.Text = string.format("Status: Boss Hit #%d! Holding ground.", bossHitsLanded)
+                                statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+                                task.wait(0.6)
+                                isCastingCombo = false
+                            else
+                                statusLabel.Text = string.format("Status: Boss in range, waiting Q buff (%.1fs)", qCd)
+                                statusLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
+                            end
                         else
                             statusLabel.Text = string.format("Status: In range, waiting E (%.1fs)", eCd)
                             statusLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
@@ -1539,45 +1552,56 @@ task.spawn(function()
                     hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
 
                     local eReady = isEReady()
+                    local qBuff = isQBuffActive()
+                    local qReady = isQReady()
 
                     if eReady then
-                        isCastingCombo = true
-                        statusLabel.Text = string.format("Status: Wiping Pack (%d mobs)!", target.count)
-                        statusLabel.TextColor3 = Color3.fromRGB(255, 80, 200)
-
-                        -- If buff not active but Q ready, pop Q before E
-                        if not isQBuffActive() and isQReady() then
+                        -- If buff not active but Q ready, pop Q first to guarantee 1-shot!
+                        if not qBuff and qReady then
                             castQ()
                             task.wait(0.12)
+                            qBuff = isQBuffActive()
                         end
 
-                        -- Re-aim at pack center
-                        lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
-                        hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
+                        if qBuff then
+                            isCastingCombo = true
+                            statusLabel.Text = string.format("Status: Wiping Pack with Q Buff (%d mobs)!", target.count)
+                            statusLabel.TextColor3 = Color3.fromRGB(255, 80, 200)
 
-                        -- Detonate E
-                        castE()
-                        task.wait(0.5)
-                        isCastingCombo = false
+                            -- Re-aim at pack center
+                            lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                            hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
+
+                            -- Detonate E
+                            castE()
+                            task.wait(0.5)
+                            isCastingCombo = false
+                        else
+                            -- E is ready, but Q buff is expired/inactive and Q is on cooldown!
+                            -- HOLD FIRE! Do not waste E without the +80% damage buff!
+                            statusLabel.Text = string.format("Status: In Range, Waiting Q Buff for 1-Shot (%.1fs)", qCd)
+                            statusLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
+                        end
                     else
                         statusLabel.Text = string.format("Status: Wipe stance (E CD: %.1fs)", eCd)
                         statusLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
                     end
 
-                -- ZONE 2: SAFE STANDOFF GUARD (ONLY IF E IS ACTUALLY ON COOLDOWN AND NO BUFF)
-                elseif minDist <= 85 and (not isEReady() and not isQBuffActive()) then
+                -- ZONE 2: SAFE STANDOFF GUARD (Stop at 85 studs if E is on CD or Q buff is not active and Q is on CD)
+                elseif minDist <= 85 and ((not isEReady()) or (not isQBuffActive() and not isQReady())) then
                     hum:MoveTo(myPos)
                     hum.AutoRotate = false
                     local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
 
                     -- Pre-buff Q before breaking standoff so we start sprinting with buff already active!
-                    if isQReady() and eCd <= 1.2 then
+                    if isQReady() and (eCd <= 1.2 or isEReady()) then
                         castQ()
                         statusLabel.Text = "Status: Pre-Buffing Q in Standoff!"
                         statusLabel.TextColor3 = Color3.fromRGB(80, 255, 160)
                     else
-                        statusLabel.Text = string.format("Status: Safe Standoff (E CD: %.1fs)", eCd)
+                        local waitReason = not isEReady() and string.format("E CD: %.1fs", eCd) or string.format("Q CD: %.1fs", qCd)
+                        statusLabel.Text = string.format("Status: Safe Standoff (%s)", waitReason)
                         statusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
                     end
 
@@ -1585,8 +1609,8 @@ task.spawn(function()
                 else
                     hum.AutoRotate = true
 
-                    -- The instant we start walking or advance, pop Q immediately!
-                    if isQReady() and (eCd <= 1.5 or isEReady()) then
+                    -- Pre-buff Q on the run when approaching pack (minDist <= 115) and E is ready or almost ready
+                    if isQReady() and minDist <= 115 and (eCd <= 1.5 or isEReady()) then
                         castQ()
                         statusLabel.Text = "Status: Sprint Buff Q Activated!"
                         statusLabel.TextColor3 = Color3.fromRGB(80, 255, 160)
