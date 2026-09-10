@@ -1,11 +1,11 @@
 -- ========================================================================
---  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.3
+--  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.4
 --  - RenderStepped Synchronous APF Vector Physics Steering (Zero Stutter, 60 FPS)
+--  - OBB Directional Beam & Spear Lateral Slicing: instant 6-stud sidestep!
+--  - Perpetual Circular Orbit Kiting (52-62 studs): Continuous tangential glide!
 --  - Dual-Phase Navigation: Highway Transit (>65 studs) -> Combat Standoff (<=65 studs)
 --  - 100% Native Physics: Zero collision tampering, zero speed manipulation
---  - Absolute Standoff Guard (50-60 studs): NEVER walks into melee range!
 --  - Seamless Motion Combat: Fires Q and E while continuously sprinting & orbiting
---  - Methodical Multi-Hit Pack Clearing: kites safely while abilities recharge
 --  - Specialized Boss Controllers:
 --      * Midgardian Champion: Slam evasion (>72 studs) + landing recovery punish
 --      * Bob The Frost Giant: Laser jump/orbit + Green Dome Safe Spot priority
@@ -348,7 +348,7 @@ local function isEReady()
     local cd = t:FindFirstChild("cooldown")
     local char = LocalPlayer.Character
     local busy = char and char:FindFirstChild("busyCasting")
-    return cd and cd.Value <= 0.05 and (busy == nil or busy.Value == false) and (tick() - lastECastTime > 0.4)
+    return cd and cd.Value <= 0.05 and (busy == nil or busy.Value == false) and (tick() - lastECastTime > 0.35)
 end
 
 local function getQCDRemaining()
@@ -496,7 +496,7 @@ local function runSafeAutoSell()
 
     if soldCount > 0 then
         sellRemote:FireServer(payload)
-        print(string.format("[NL Master v1.3] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
+        print(string.format("[NL Master v1.4] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
     end
     return soldCount, keptCount
 end
@@ -548,7 +548,7 @@ verLabel.Name = "VerLabel"
 verLabel.Size = UDim2.new(1, 0, 0, 14)
 verLabel.Position = UDim2.new(0, 0, 0, 22)
 verLabel.BackgroundTransparency = 1
-verLabel.Text = "v1.3 (TAS RenderStepped Engine)"
+verLabel.Text = "v1.4 (OBB Slicing & Orbit Engine)"
 verLabel.Font = Enum.Font.GothamMedium
 verLabel.TextSize = 9
 verLabel.TextColor3 = Color3.fromRGB(120, 190, 255)
@@ -887,7 +887,7 @@ local function getTargetCluster(myPos)
 end
 
 -- ========================================================================
--- 6. ARTIFICIAL POTENTIAL FIELD (APF) HAZARD SCANNER
+-- 6. OBB DIRECTIONAL BEAM & CIRCLE HAZARD DEFLECTION ENGINE
 -- ========================================================================
 local KNOWN_HAZARD_NAMES = {
     spearmanstrike = true,
@@ -906,26 +906,62 @@ local KNOWN_HAZARD_NAMES = {
     circlehit = true
 }
 
-local function scanActiveHazards(myPos, radius)
-    local hazards = {}
+local function evaluateHazardDeflection(myPos, hazardPart)
+    local hCFrame = hazardPart.CFrame
+    local hPos = hCFrame.Position
+    local hLook = hCFrame.LookVector
+    local hSize = hazardPart.Size
+    local toPlayer = Vector3.new(myPos.X - hPos.X, 0, myPos.Z - hPos.Z)
+
+    local isBeam = (hSize.Z > 18 or hSize.X > 18) or hazardPart.Name:lower():find("beam") or hazardPart.Name:lower():find("strike")
+    if isBeam then
+        local beamDir = Vector3.new(hLook.X, 0, hLook.Z).Unit
+        local beamLen = math.max(hSize.Z, 65.0)
+        local beamHalfWidth = math.max(hSize.X * 0.5, 6.0)
+
+        local t = toPlayer:Dot(beamDir)
+        if t >= -5.0 and t <= (beamLen + 10.0) then
+            local perp = toPlayer - beamDir * t
+            local perpDist = perp.Magnitude
+            if perpDist < (beamHalfWidth + 6.0) then
+                local sideDir = perpDist > 0.1 and perp.Unit or Vector3.new(-beamDir.Z, 0, beamDir.X)
+                return sideDir * (4.5 + (beamHalfWidth + 6.0 - perpDist) * 0.5), true
+            end
+        end
+    else
+        local rad = math.max(hSize.X, hSize.Z) * 0.5 + 4.5
+        local d = toPlayer.Magnitude
+        if d < rad then
+            local exitDir = d > 0.1 and toPlayer.Unit or Vector3.new(1, 0, 0)
+            return exitDir * (4.0 + (rad - d) * 0.5), true
+        elseif d < (rad + 16.0) then
+            local warnDir = toPlayer.Unit
+            local tangent = Vector3.new(-warnDir.Z, 0, warnDir.X)
+            local decay = (rad + 16.0 - d) / 16.0
+            return (warnDir * 1.0 + tangent * 1.5) * decay, false
+        end
+    end
+    return Vector3.zero, false
+end
+
+local function scanAndEvaluateHazards(myPos, radius)
+    local totalForce = Vector3.zero
+    local isCritical = false
+
     local folders = {Workspace:FindFirstChild("abilities"), Workspace:FindFirstChild("stunParts")}
     for _, f in ipairs(folders) do
         if f then
             for _, c in ipairs(f:GetChildren()) do
                 if c:IsA("BasePart") then
-                    local d = (Vector3.new(c.Position.X, 0, c.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
-                    if d <= radius then
-                        local rad = math.max(c.Size.X, c.Size.Z) * 0.5
-                        table.insert(hazards, {pos = c.Position, radius = rad, dist = d})
-                    end
+                    local fv, crit = evaluateHazardDeflection(myPos, c)
+                    if crit then isCritical = true end
+                    totalForce = totalForce + fv
                 elseif c:IsA("Model") then
                     local p = c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
                     if p then
-                        local d = (Vector3.new(p.Position.X, 0, p.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
-                        if d <= radius then
-                            local rad = math.max(p.Size.X, p.Size.Z) * 0.5
-                            table.insert(hazards, {pos = p.Position, radius = rad, dist = d})
-                        end
+                        local fv, crit = evaluateHazardDeflection(myPos, p)
+                        if crit then isCritical = true end
+                        totalForce = totalForce + fv
                     end
                 end
             end
@@ -936,16 +972,14 @@ local function scanActiveHazards(myPos, radius)
         if c:IsA("BasePart") and c.CanCollide == false and c.Transparency < 1 then
             local nLow = c.Name:lower()
             if KNOWN_HAZARD_NAMES[nLow] or nLow:find("strike") or nLow:find("beam") or nLow:find("hit") or nLow:find("aoe") then
-                local d = (Vector3.new(c.Position.X, 0, c.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
-                if d <= radius then
-                    local rad = math.max(c.Size.X, c.Size.Z) * 0.5
-                    table.insert(hazards, {pos = c.Position, radius = rad, dist = d})
-                end
+                local fv, crit = evaluateHazardDeflection(myPos, c)
+                if crit then isCritical = true end
+                totalForce = totalForce + fv
             end
         end
     end
 
-    return hazards
+    return totalForce, isCritical
 end
 
 local function getActiveSafeDome(myPos)
@@ -1024,7 +1058,6 @@ renderConnection = RunService.RenderStepped:Connect(function(dt)
     local F_hazard = Vector3.zero
     local F_predict = Vector3.zero
     local F_orbit = Vector3.zero
-    local F_separation = Vector3.zero
     local inHazardEscape = false
 
     -- Highway Transit Force (Only active when NOT in combat standoff range!)
@@ -1037,7 +1070,7 @@ renderConnection = RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- Hazard Repulsion
+    -- Hazard Repulsion via OBB Beam Slicing & Circular Evasion
     local safeDomePos = getActiveSafeDome(myPos)
     if safeDomePos then
         local toSafe = Vector3.new(safeDomePos.X - myPos.X, 0, safeDomePos.Z - myPos.Z)
@@ -1048,64 +1081,36 @@ renderConnection = RunService.RenderStepped:Connect(function(dt)
             currentStatusColor = Color3.fromRGB(0, 255, 180)
         end
     else
-        local activeHazards = scanActiveHazards(myPos, 65)
-        for _, h in ipairs(activeHazards) do
-            local toHazard = Vector3.new(myPos.X - h.pos.X, 0, myPos.Z - h.pos.Z)
-            local distH = toHazard.Magnitude
-            local safeDist = h.radius + 4.5
-
-            if distH < safeDist then
-                inHazardEscape = true
-                local exitDir = distH > 0.1 and toHazard.Unit or Vector3.new(1, 0, 0)
-                local exitForce = 4.0 + (safeDist - distH) * 0.6
-                F_hazard = F_hazard + exitDir * exitForce
-            elseif distH < (safeDist + 16.0) then
-                local warnDir = toHazard.Unit
-                local decay = (safeDist + 16.0 - distH) / 16.0
-                local tangent = Vector3.new(-warnDir.Z, 0, warnDir.X)
-                F_hazard = F_hazard + (warnDir * 1.0 + tangent * 1.5) * decay
-            end
-        end
+        local hazForce, crit = scanAndEvaluateHazards(myPos, 65)
+        F_hazard = hazForce
+        inHazardEscape = crit
     end
 
-    -- Proactive Lateral Windup Prediction
+    -- Proactive Lateral Avoidance on Mob Facing Direction
     if inCombatRange and not inHazardEscape then
         local nearbyMobs = target.isBoss and {target} or (target.mobs or {})
         for _, m in ipairs(nearbyMobs) do
             local mHrp = m.hrp
             local mHum = m.hum
             if mHrp and mHum then
-                local d = (Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
-                if d <= 55 then
-                    local isAttacking = false
-                    pcall(function()
-                        local anim = mHum:FindFirstChildOfClass("Animator")
-                        if anim then
-                            for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
-                                local tName = track.Name:lower()
-                                if tName:find("attack") or tName:find("spear") or tName:find("slash") or tName:find("cast") or tName:find("thrust") then
-                                    isAttacking = true
-                                    break
-                                end
-                            end
-                        end
-                    end)
-
-                    if isAttacking then
-                        local look = mHrp.CFrame.LookVector
-                        local toPlayer = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z)).Unit
-                        if look:Dot(toPlayer) > 0.4 then
-                            local right = mHrp.CFrame.RightVector
-                            local lateral = (toPlayer:Dot(right) >= 0) and right or -right
-                            F_predict = F_predict + Vector3.new(lateral.X, 0, lateral.Z).Unit * 3.0
-                        end
+                local toP = Vector3.new(myPos.X - mHrp.Position.X, 0, myPos.Z - mHrp.Position.Z)
+                local d = toP.Magnitude
+                if d <= 60 then
+                    local look = mHrp.CFrame.LookVector
+                    local lookHoriz = Vector3.new(look.X, 0, look.Z).Unit
+                    local toPHoriz = toP.Unit
+                    -- If mob is facing directly towards player (within 35 deg):
+                    if lookHoriz:Dot(toPHoriz) > 0.82 then
+                        local right = mHrp.CFrame.RightVector
+                        local lateral = (toP:Dot(right) >= 0) and right or -right
+                        F_predict = F_predict + Vector3.new(lateral.X, 0, lateral.Z).Unit * 3.2
                     end
                 end
             end
         end
     end
 
-    -- Tactical Standoff & Orbital Kiting Guard (<= 65 studs)
+    -- Perpetual Circular Orbit Kiting (52-62 studs)
     if inCombatRange then
         local centroid = target.centerPos
         local toCentroid = Vector3.new(centroid.X - myPos.X, 0, centroid.Z - myPos.Z)
@@ -1116,16 +1121,17 @@ renderConnection = RunService.RenderStepped:Connect(function(dt)
             idealStandoff = 66.0
         end
 
+        local radial = toCentroid.Unit
+        local tangent = Vector3.new(-radial.Z, 0, radial.X)
+
+        local radialPush = 0
         if distC < idealStandoff then
-            local retreatDir = -toCentroid.Unit
-            local severity = (idealStandoff - distC) / 15.0
-            local retreatPower = 2.5 + severity * 2.5
-            F_separation = retreatDir * retreatPower
+            radialPush = -((idealStandoff - distC) / 15.0) * 3.5
+        elseif distC > (idealStandoff + 12.0) then
+            radialPush = ((distC - idealStandoff - 12.0) / 15.0) * 1.5
         end
 
-        local radial = -toCentroid.Unit
-        local tangent = Vector3.new(-radial.Z, 0, radial.X)
-        F_orbit = tangent * 2.0
+        F_orbit = tangent * 2.2 + radial * radialPush
     end
 
     -- 3. Opportunistic Motion Combat (Q Buff + E Detonation)
@@ -1157,15 +1163,15 @@ renderConnection = RunService.RenderStepped:Connect(function(dt)
     local eCd = getECDRemaining()
     if inHazardEscape then
         currentPhaseText = "EVADING: Critical Hazard Area"
-        currentStatusText = "Status: Vector Field SDF Evasion"
+        currentStatusText = "Status: OBB Lateral Slicing Evasion"
         currentStatusColor = Color3.fromRGB(255, 80, 80)
     elseif inCombatRange then
         if target.isBoss then
             currentPhaseText = string.format("BOSS: %s (%.0f studs)", target.name, target.dist)
-            currentStatusText = string.format("Status: Standoff Kiting (E CD: %.1fs)", eCd)
+            currentStatusText = string.format("Status: Circular Standoff Kiting (E CD: %.1fs)", eCd)
         else
             currentPhaseText = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count, target.dist)
-            currentStatusText = string.format("Status: Standoff Kiting & Herding (E CD: %.1fs)", eCd)
+            currentStatusText = string.format("Status: Circular Orbit Kiting & Herding (E CD: %.1fs)", eCd)
         end
         currentStatusColor = Color3.fromRGB(0, 220, 255)
     else
@@ -1181,7 +1187,7 @@ renderConnection = RunService.RenderStepped:Connect(function(dt)
     end
 
     -- 5. Native Humanoid:Move Execution
-    local V_composite = F_goal * 1.0 + F_hazard * 1.0 + F_predict * 1.0 + F_separation * 1.0 + F_orbit * 1.0
+    local V_composite = F_goal * 1.0 + F_hazard * 1.0 + F_predict * 1.0 + F_orbit * 1.0
     local vHoriz = Vector3.new(V_composite.X, 0, V_composite.Z)
     if vHoriz.Magnitude > 0.05 then
         hum.AutoRotate = true
@@ -1255,7 +1261,6 @@ task.spawn(function()
         task.wait(0.15)
         checkAutoStart()
 
-        -- Update HUD Labels
         phaseLabel.Text = currentPhaseText
         statusLabel.Text = currentStatusText
         statusLabel.TextColor3 = currentStatusColor
@@ -1277,11 +1282,10 @@ task.spawn(function()
             cdLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
         end
 
-        -- Victory & Auto-Replay
         if autoReplay and not isReplaying and getDungeonFinished() then
             isReplaying = true
             runsCompleted = runsCompleted + 1
-            print(string.format("[NL Master v1.3] Dungeon Victory detected! Total runs: %d", runsCompleted))
+            print(string.format("[NL Master v1.4] Dungeon Victory detected! Total runs: %d", runsCompleted))
 
             for sec = 5, 1, -1 do
                 if not _G.NL_AUTOFARM_RUNNING or not autoReplay then break end
@@ -1320,7 +1324,7 @@ task.spawn(function()
             local replayRemote = remotes and remotes:FindFirstChild("replayDungeon")
             if replayRemote then
                 replayRemote:FireServer(data)
-                print("[NL Master v1.3] Fired replayDungeon:FireServer successfully!")
+                print("[NL Master v1.4] Fired replayDungeon:FireServer successfully!")
             end
 
             for _ = 1, 30 do
@@ -1332,7 +1336,7 @@ task.spawn(function()
             bossHitsLanded = 0
             isReplaying = false
             startTime = tick()
-            print("[NL Master v1.3] Dungeon reset confirmed! Restarting run loop...")
+            print("[NL Master v1.4] Dungeon reset confirmed! Restarting run loop...")
         end
     end
 end)
@@ -1342,10 +1346,10 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     local hrp = newChar:WaitForChild("HumanoidRootPart", 10)
     if hrp then
         currentWpIndex = findClosestWaypointIndex(hrp.Position, 1, totalWps)
-        print(string.format("[NL Master v1.3] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
+        print(string.format("[NL Master v1.4] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
     end
 end)
 
 print("========================================================================")
-print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.3 successfully loaded!")
+print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.4 successfully loaded!")
 print("========================================================================")
