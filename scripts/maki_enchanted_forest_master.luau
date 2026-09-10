@@ -126,19 +126,55 @@ end
 
 -- ========================================================================
 -- 1. LOAD HIGHWAY WAYPOINTS (1,015 Points from Spawn to Dragon)
+--    Tier 1: Local readfile (PC - fastest)
+--    Tier 2: GitHub HttpGet (Mobile / Cloud - automatic fallback)
 -- ========================================================================
+local GITHUB_PATH_URL = "https://raw.githubusercontent.com/MayyAlterrr/maki-suite/main/paths/dqr_highway_enchanted_forest.json"
 local waypoints = {}
-pcall(function()
-    local raw = readfile("dqr_highway_enchanted_forest.json")
+
+local function parseWaypoints(raw)
     local parsed = HttpService:JSONDecode(raw)
     if parsed and parsed.points then
         for _, pt in ipairs(parsed.points) do
             table.insert(waypoints, Vector3.new(pt.x, pt.y, pt.z))
         end
     end
-end)
+end
+
+-- Tier 1: Try local file (PC only)
+if #waypoints == 0 then
+    pcall(function()
+        if typeof(isfile) == "function" and isfile("dqr_highway_enchanted_forest.json") then
+            local raw = readfile("dqr_highway_enchanted_forest.json")
+            parseWaypoints(raw)
+            if #waypoints > 0 then
+                print(string.format("[EF Master] Tier 1 (Local): Loaded %d waypoints", #waypoints))
+            end
+        end
+    end)
+end
+
+-- Tier 2: Fallback to GitHub (Mobile / Cloud / any device)
+if #waypoints == 0 then
+    pcall(function()
+        print("[EF Master] Tier 2 (GitHub): Fetching highway waypoints...")
+        local raw = game:HttpGet(GITHUB_PATH_URL)
+        parseWaypoints(raw)
+        if #waypoints > 0 then
+            print(string.format("[EF Master] Tier 2 (GitHub): Loaded %d waypoints", #waypoints))
+            -- Cache locally for next time if possible
+            pcall(function()
+                if typeof(writefile) == "function" then
+                    writefile("dqr_highway_enchanted_forest.json", raw)
+                    print("[EF Master] Path cached locally for next run.")
+                end
+            end)
+        end
+    end)
+end
+
 local totalWps = #waypoints
-print(string.format("[EF Master] Loaded %d highway waypoints", totalWps))
+print(string.format("[EF Master] Highway ready: %d waypoints total", totalWps))
 
 local function findClosestWaypointIndex(pos, startIdx, endIdx)
     local s = math.max(1, startIdx or 1)
