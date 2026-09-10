@@ -2650,7 +2650,7 @@ task.spawn(function()
 
         -- If we can already see Room 6 mobs and are near the doorway, finish shortcut immediately!
 
-        if target and target.room == "room6" and myPos.Z >= 480 then
+        if not room5ShortcutDone and target and target.room == "room6" and myPos.Z >= 480 then
 
             room5ShortcutDone = true
 
