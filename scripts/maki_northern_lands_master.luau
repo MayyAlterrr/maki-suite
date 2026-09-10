@@ -1,6 +1,7 @@
 -- ========================================================================
---  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.1
+--  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.2
 --  - Next-Gen Artificial Potential Field (APF) Vector Evasion & Tactical Kiting
+--  - Dual-Phase Navigation: Highway Transit (>65 studs) -> Combat Standoff (<=65 studs)
 --  - 100% Native Physics: Zero collision tampering, zero speed manipulation
 --  - Full Humanoid:Move(dir, false) sprint fluidity: 0 deceleration, 0 stutter
 --  - Absolute Standoff Guard (50-60 studs): NEVER walks into melee range!
@@ -489,7 +490,7 @@ local function runSafeAutoSell()
 
     if soldCount > 0 then
         sellRemote:FireServer(payload)
-        print(string.format("[NL Master v1.1] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
+        print(string.format("[NL Master v1.2] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
     end
     return soldCount, keptCount
 end
@@ -541,7 +542,7 @@ verLabel.Name = "VerLabel"
 verLabel.Size = UDim2.new(1, 0, 0, 14)
 verLabel.Position = UDim2.new(0, 0, 0, 22)
 verLabel.BackgroundTransparency = 1
-verLabel.Text = "v1.1 (TAS Standoff APF Engine)"
+verLabel.Text = "v1.2 (TAS Dual-Phase Engine)"
 verLabel.Font = Enum.Font.GothamMedium
 verLabel.TextSize = 9
 verLabel.TextColor3 = Color3.fromRGB(120, 190, 255)
@@ -809,7 +810,6 @@ local function getTargetCluster(myPos)
                         centerPos = boss.pos
                     }
                 else
-                    -- Group into multi-pack clusters
                     local n = #aliveMobs
                     local adj = {}
                     for i = 1, n do adj[i] = {} end
@@ -847,7 +847,6 @@ local function getTargetCluster(myPos)
                         end
                     end
 
-                    -- Resolve closest pack
                     local bestPack = nil
                     local bestDist = 999999
                     for _, pkm in ipairs(packs) do
@@ -1030,6 +1029,7 @@ task.spawn(function()
         local target = getTargetCluster(myPos)
         local lookaheadIdx = math.min(totalWps, currentWpIndex + 5)
         local targetWp = waypoints[lookaheadIdx] or waypoints[currentWpIndex]
+        local inCombatRange = target and (target.dist <= 65.0)
 
         -- ================================================================
         -- ARTIFICIAL POTENTIAL FIELD (APF) FORCE VECTOR SYNTHESIS
@@ -1041,9 +1041,8 @@ task.spawn(function()
         local F_separation = Vector3.zero
         local inHazardEscape = false
 
-        -- 1. F_goal: ONLY active when NO mobs are alive in front of us!
-        --    When mobs are present, F_goal is 0 so the bot NEVER walks into danger!
-        if target == nil then
+        -- 1. F_goal: Sprints strictly along Highway during Transit (> 65 studs or no target)
+        if not inCombatRange then
             if targetWp then
                 local toWp = Vector3.new(targetWp.X - myPos.X, 0, targetWp.Z - myPos.Z)
                 if toWp.Magnitude > 0.1 then
@@ -1084,7 +1083,7 @@ task.spawn(function()
         end
 
         -- 3. F_predict: Proactive lateral windup avoidance (Spearman thrust cone, Mage beam)
-        if target and not inHazardEscape then
+        if inCombatRange and not inHazardEscape then
             local nearbyMobs = target.isBoss and {target} or (target.mobs or {})
             for _, m in ipairs(nearbyMobs) do
                 local mHrp = m.hrp
@@ -1120,9 +1119,8 @@ task.spawn(function()
             end
         end
 
-        -- 4. F_separation & F_orbit: TACTICAL STANDOFF KITING GUARD
-        --    Maintains 52-60 studs distance! NEVER lets melee mobs (< 48 studs) close in!
-        if target then
+        -- 4. F_separation & F_orbit: TACTICAL STANDOFF KITING GUARD (<= 65 studs)
+        if inCombatRange then
             local centroid = target.centerPos
             local toCentroid = Vector3.new(centroid.X - myPos.X, 0, centroid.Z - myPos.Z)
             local distC = toCentroid.Magnitude
@@ -1132,22 +1130,18 @@ task.spawn(function()
                 idealStandoff = 66.0
             end
 
-            -- RETREAT FORCE: If mobs are closer than ideal standoff, push away with high priority!
+            -- RETREAT FORCE: If closer than ideal standoff, back away smoothly!
             if distC < idealStandoff then
                 local retreatDir = -toCentroid.Unit
                 local severity = (idealStandoff - distC) / 15.0
-                local retreatPower = 2.5 + severity * 2.5 -- up to 5.0 retreat force
+                local retreatPower = 2.5 + severity * 2.5
                 F_separation = retreatDir * retreatPower
-            elseif distC > (idealStandoff + 14.0) then
-                -- Step closer if mobs fall too far behind
-                local approachDir = toCentroid.Unit
-                F_orbit = approachDir * 1.2
             end
 
             -- TANGENTIAL ORBIT: Smooth circular glide around mob centroid
             local radial = -toCentroid.Unit
             local tangent = Vector3.new(-radial.Z, 0, radial.X)
-            F_orbit = F_orbit + tangent * 2.0
+            F_orbit = tangent * 2.0
         end
 
         -- ================================================================
@@ -1162,18 +1156,13 @@ task.spawn(function()
             end
 
             -- Strike E condition:
-            -- 1. Not in critical hazard area
-            -- 2. Safely out of melee danger (dist >= 40 studs)
-            -- 3. In range of Flame Shuriken (dist <= 72 studs)
-            -- 4. E is ready!
-            if not inHazardEscape and dist >= 40 and dist <= 72 and isEReady() then
+            if not inHazardEscape and dist >= 38 and dist <= 72 and isEReady() then
                 if not isQBuffActive() and isQReady() then
                     castQ()
                     task.wait(0.08)
                 end
 
                 if isQBuffActive() then
-                    -- Non-stop snap aim & fire: DO NOT FREEZE CHARACTER!
                     local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
                     castE()
@@ -1184,7 +1173,6 @@ task.spawn(function()
                 end
             end
         elseif isQReady() then
-            -- Empty highway transit: pop Q on cooldown for top travel speed
             castQ()
         end
 
@@ -1197,7 +1185,7 @@ task.spawn(function()
             phaseLabel.Text = "EVADING: Critical Hazard Area"
             statusLabel.Text = "Status: Vector Field SDF Evasion"
             statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        elseif target then
+        elseif inCombatRange then
             if target.isBoss then
                 phaseLabel.Text = string.format("BOSS: %s (%.0f studs)", target.name, target.dist)
                 statusLabel.Text = string.format("Status: Standoff Kiting (E CD: %.1fs)", eCd)
@@ -1207,9 +1195,15 @@ task.spawn(function()
             end
             statusLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
         else
-            phaseLabel.Text = string.format("Highway %d/%d", currentWpIndex, totalWps)
-            statusLabel.Text = string.format("Status: Native Sprint Transit (wp %d)", currentWpIndex)
-            statusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
+            if target then
+                phaseLabel.Text = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count or 1, target.dist)
+                statusLabel.Text = string.format("Status: Approaching Pack (wp %d)", currentWpIndex)
+                statusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
+            else
+                phaseLabel.Text = string.format("Highway %d/%d", currentWpIndex, totalWps)
+                statusLabel.Text = string.format("Status: Native Sprint Transit (wp %d)", currentWpIndex)
+                statusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
+            end
         end
 
         local vHoriz = Vector3.new(V_composite.X, 0, V_composite.Z)
@@ -1220,7 +1214,6 @@ task.spawn(function()
             hum:Move(Vector3.zero, false)
         end
 
-        -- Anti-stuck watchdog: hop over lips or bumps automatically
         if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 2.5 then
             hum.Jump = true
         end
@@ -1277,7 +1270,7 @@ task.spawn(function()
         if getDungeonFinished() then
             isReplaying = true
             runsCompleted = runsCompleted + 1
-            print(string.format("[NL Master v1.1] Dungeon Victory detected! Total runs: %d", runsCompleted))
+            print(string.format("[NL Master v1.2] Dungeon Victory detected! Total runs: %d", runsCompleted))
 
             for sec = 5, 1, -1 do
                 if not _G.NL_AUTOFARM_RUNNING or not autoReplay then break end
@@ -1316,7 +1309,7 @@ task.spawn(function()
             local replayRemote = remotes and remotes:FindFirstChild("replayDungeon")
             if replayRemote then
                 replayRemote:FireServer(data)
-                print("[NL Master v1.1] Fired replayDungeon:FireServer successfully!")
+                print("[NL Master v1.2] Fired replayDungeon:FireServer successfully!")
             end
 
             for _ = 1, 30 do
@@ -1328,7 +1321,7 @@ task.spawn(function()
             bossHitsLanded = 0
             isReplaying = false
             startTime = tick()
-            print("[NL Master v1.1] Dungeon reset confirmed! Restarting run loop...")
+            print("[NL Master v1.2] Dungeon reset confirmed! Restarting run loop...")
         end
     end
 end)
@@ -1338,10 +1331,10 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     local hrp = newChar:WaitForChild("HumanoidRootPart", 10)
     if hrp then
         currentWpIndex = findClosestWaypointIndex(hrp.Position, 1, totalWps)
-        print(string.format("[NL Master v1.1] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
+        print(string.format("[NL Master v1.2] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
     end
 end)
 
 print("========================================================================")
-print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.1 successfully loaded!")
+print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.2 successfully loaded!")
 print("========================================================================")
