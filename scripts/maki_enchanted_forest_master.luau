@@ -1224,6 +1224,7 @@ local function getTargetCluster(myPos)
                             local minDist = 999999
                             local backlineDist = 0
                             local closestMob = nil
+                            local backlineMob = nil
 
                             for _, mob in ipairs(packMobs) do
                                 local mPos = mob.pos
@@ -1235,6 +1236,7 @@ local function getTargetCluster(myPos)
                                 end
                                 if d > backlineDist then
                                     backlineDist = d
+                                    backlineMob = mob
                                 end
                             end
 
@@ -1247,7 +1249,8 @@ local function getTargetCluster(myPos)
                                 minDist = minDist,
                                 backlineDist = backlineDist,
                                 centerPos = packCenter,
-                                closestMob = closestMob
+                                closestMob = closestMob,
+                                backlineMob = backlineMob
                             })
                         end
                     end
@@ -1517,13 +1520,18 @@ task.spawn(function()
                     phaseLabel.Text = string.format("%s: %d mobs (backline: %.0f studs)", target.room:upper(), target.count, backDist)
                 end
 
-                -- ZONE 3: AoE WIPE ZONE (Backline is <= 82 studs)
-                if backDist <= 82 then
+                -- ZONE 3: AoE WIPE ZONE (Backline is <= 65 studs)
+                -- 65 studs guarantees that even on deep 9-mob packs (like Room 6 tunnel), 100% of mobs are inside E's blast radius
+                if backDist <= 65 then
                     hum:MoveTo(myPos)
                     hum.AutoRotate = false
 
-                    -- Shift-lock face the pack center
-                    local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                    -- Shift-lock aim: for spread-out packs (spread > 18 studs), aim deeper towards backline so E penetrates all 9 mobs
+                    local aimPos = target.centerPos
+                    if target.backlineMob and (target.backlineDist - target.minDist > 18) then
+                        aimPos = target.centerPos:Lerp(target.backlineMob.pos, 0.45)
+                    end
+                    local lookPos = Vector3.new(aimPos.X, hrp.Position.Y, aimPos.Z)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
 
                     local eReady = isEReady()
@@ -1543,8 +1551,8 @@ task.spawn(function()
                             statusLabel.Text = string.format("Status: Wiping Pack with Q Buff (%d mobs)!", target.count)
                             statusLabel.TextColor3 = Color3.fromRGB(255, 80, 200)
 
-                            -- Re-aim at pack center
-                            lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                            -- Re-aim at penetration aimPos
+                            lookPos = Vector3.new(aimPos.X, hrp.Position.Y, aimPos.Z)
                             hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
 
                             -- Detonate E
@@ -1562,11 +1570,15 @@ task.spawn(function()
                         statusLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
                     end
 
-                -- ZONE 2: SAFE STANDOFF GUARD (Stop at 85 studs if E is on CD or Q buff is not active and Q is on CD)
-                elseif minDist <= 85 and ((not isEReady()) or (not isQBuffActive() and not isQReady())) then
+                -- ZONE 2: SAFE STANDOFF GUARD (Stop at 75 studs if E is on CD or Q buff is not active and Q is on CD)
+                elseif minDist <= 75 and ((not isEReady()) or (not isQBuffActive() and not isQReady())) then
                     hum:MoveTo(myPos)
                     hum.AutoRotate = false
-                    local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                    local aimPos = target.centerPos
+                    if target.backlineMob and (target.backlineDist - target.minDist > 18) then
+                        aimPos = target.centerPos:Lerp(target.backlineMob.pos, 0.45)
+                    end
+                    local lookPos = Vector3.new(aimPos.X, hrp.Position.Y, aimPos.Z)
                     hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
 
                     -- Pre-buff Q before breaking standoff so we start sprinting with buff already active!
@@ -1595,7 +1607,7 @@ task.spawn(function()
                     local targetWp = waypoints[lookaheadIdx] or waypoints[currentWpIndex]
                     if targetWp then
                         smoothMoveTo(hum, targetWp)
-                        if minDist <= 85 then
+                        if minDist <= 75 then
                             statusLabel.Text = string.format("Status: Highway Sprint to Wipe (backline: %.0f studs)", backDist)
                             statusLabel.TextColor3 = Color3.fromRGB(0, 255, 220)
                         else
