@@ -100,22 +100,6 @@ local lastQCastTime = 0
 local treeKilledThisRun = false
 local treeSpawnDetected = false
 local treeHitsLanded = 0
-local shortcutActive = false
-local shortcutIdx = 1
-local room5ShortcutDone = false
-
--- Room 5 Bump Bypass Channel: skirts around the left side of the platform bump to Room 6 door
-local SHORTCUT_POINTS = {
-    Vector3.new(-671.1, -24.4, 290.1),
-    Vector3.new(-730.0, -26.0, 290.0),
-    Vector3.new(-780.0, -27.5, 310.0),
-    Vector3.new(-815.0, -27.5, 360.0),
-    Vector3.new(-815.0, -27.5, 410.0),
-    Vector3.new(-800.0, -27.0, 460.0),
-    Vector3.new(-825.0, -25.0, 490.0),
-    Vector3.new(-837.5, -24.5, 505.1)
-}
-
 local Q_BUFF_DURATION = 4.0 -- User specified: Q passive buff (+80% damage and sprint) lasts 4.0s
 
 local function isQBuffActive()
@@ -1140,8 +1124,8 @@ local function getTargetCluster(myPos)
                         centerPos = boss.pos
                     }
                 else
-                    if treeHitsLanded > 0 then
-                        -- Tree was fought, took hits and is now gone: confirmed dead!
+                    if treeSpawnDetected or treeHitsLanded > 0 then
+                        -- Tree was fought / was spawned and is now gone: confirmed dead!
                         treeKilledThisRun = true
                         continue
                     else
@@ -1293,21 +1277,9 @@ task.spawn(function()
             treeKilledThisRun = false
             treeSpawnDetected = false
             treeHitsLanded = 0
-            shortcutActive = false
-            shortcutIdx = 1
-            room5ShortcutDone = false
         end
 
-        local inRoom5Shortcut = treeKilledThisRun and not room5ShortcutDone and myPos.Z < 504 and myPos.X < -630
         local target = getTargetCluster(myPos)
-
-        -- If we can already see Room 6 mobs and are near the doorway, finish shortcut immediately!
-        if target and target.room == "room6" and myPos.Z >= 480 then
-            room5ShortcutDone = true
-            inRoom5Shortcut = false
-            shortcutActive = false
-            currentWpIndex = findClosestWaypointIndex(myPos, 615, 630)
-        end
 
         checkAutoStart()
 
@@ -1329,8 +1301,8 @@ task.spawn(function()
             cdLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
         end
 
-        -- Update Current Highway Waypoint Index (bypassed during straight shortcut)
-        if not inRoom5Shortcut and totalWps > 0 then
+        -- Update Current Highway Waypoint Index (814-point highway seamlessly handles Room 5 shortcut & Room 6)
+        if totalWps > 0 then
             local distToCurrent = waypoints[currentWpIndex] and (waypoints[currentWpIndex] - myPos).Magnitude or 999999
             if distToCurrent > 80 then
                 currentWpIndex = findClosestWaypointIndex(myPos, 1, totalWps)
@@ -1357,58 +1329,12 @@ task.spawn(function()
             end
         end
 
-        if inRoom5Shortcut then
-            -- Anti-stuck watchdog: hop over any lip or bump automatically
-            if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 3 then
-                hum.Jump = true
-            end
+        -- Anti-stuck watchdog: hop over any lip or bump automatically
+        if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 3 then
+            hum.Jump = true
+        end
 
-            if not shortcutActive then
-                shortcutActive = true
-                local bestIdx = 1
-                local bestDist = 999999
-                for i, pt in ipairs(SHORTCUT_POINTS) do
-                    local d = (pt - myPos).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        bestIdx = i
-                    end
-                end
-                shortcutIdx = math.min(#SHORTCUT_POINTS, bestIdx + 1)
-            end
-
-            local targetPt = SHORTCUT_POINTS[shortcutIdx]
-            if (myPos - targetPt).Magnitude <= 14 then
-                if shortcutIdx < #SHORTCUT_POINTS then
-                    shortcutIdx = shortcutIdx + 1
-                    targetPt = SHORTCUT_POINTS[shortcutIdx]
-                else
-                    room5ShortcutDone = true
-                    shortcutActive = false
-                    currentWpIndex = findClosestWaypointIndex(myPos, 615, 630)
-                    print(string.format("[EF Master] Room 5 bump bypass complete! Resumed at highway wp %d", currentWpIndex))
-                end
-            end
-
-            if not room5ShortcutDone then
-                phaseLabel.Text = string.format("Phase: Bypass Bump (%d/%d)", shortcutIdx, #SHORTCUT_POINTS)
-                statusLabel.Text = string.format("Status: Skirting Bump to Room 6 (%.0f studs)", (targetPt - myPos).Magnitude)
-                statusLabel.TextColor3 = Color3.fromRGB(0, 255, 200)
-
-                hum.AutoRotate = true
-                if isQReady() then
-                    castQ()
-                end
-                smoothMoveTo(hum, targetPt)
-
-                if (myPos - SHORTCUT_POINTS[#SHORTCUT_POINTS]).Magnitude <= 14 or myPos.Z >= 504 then
-                    room5ShortcutDone = true
-                    shortcutActive = false
-                    currentWpIndex = findClosestWaypointIndex(myPos, 615, 630)
-                    print(string.format("[EF Master] Room 5 bump bypass complete! Resumed at highway wp %d", currentWpIndex))
-                end
-            end
-        elseif target then
+        if target then
             if target.isBoss then
                 if target.isWaitingSpawn then
                     phaseLabel.Text = "BOSS: Ancient Tree (Spawning...)"
@@ -1655,9 +1581,6 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 
         local snapIdx = findClosestWaypointIndex(hrp.Position, 1, totalWps)
         currentWpIndex = snapIdx
-        room5ShortcutDone = false
-        shortcutActive = false
-        shortcutIdx = 1
         print(string.format("[EF Master v1.3] Respawned at %s, resumed at highway wp %d/%d", tostring(hrp.Position), currentWpIndex, totalWps))
     end
 end)
@@ -1773,9 +1696,6 @@ task.spawn(function()
             treeKilledThisRun = false
             treeSpawnDetected = false
             treeHitsLanded = 0
-            shortcutActive = false
-            shortcutIdx = 1
-            room5ShortcutDone = false
             bossHitsLanded = 0
             startTime = tick()
             isCastingCombo = false
