@@ -1,11 +1,13 @@
 -- ========================================================================
---  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.0
---  - Next-Gen Artificial Potential Field (APF) Vector Evasion & Purposeful Movement
+--  PROJECT MAKI: NORTHERN LANDS (NIGHTMARE / INSANE) MASTER AUTO-FARM ENGINE v1.1
+--  - Next-Gen Artificial Potential Field (APF) Vector Evasion & Tactical Kiting
 --  - 100% Native Physics: Zero collision tampering, zero speed manipulation
 --  - Full Humanoid:Move(dir, false) sprint fluidity: 0 deceleration, 0 stutter
---  - Opportunistic Strike Gating: Pre-buffs Q (+80% speed/damage), drops E on safe ground
+--  - Absolute Standoff Guard (50-60 studs): NEVER walks into melee range!
+--  - Seamless Motion Combat: Fires Q and E while continuously sprinting & orbiting
+--  - Methodical Multi-Hit Pack Clearing: kites safely while abilities recharge
 --  - Specialized Boss Controllers:
---      * Midgardian Champion: Slam evasion (>72 studs) + 1.4s landing recovery punish
+--      * Midgardian Champion: Slam evasion (>72 studs) + landing recovery punish
 --      * Bob The Frost Giant: Laser jump/orbit + Green Dome Safe Spot priority
 --      * Odin & Rødin: Center Rune Ring tracking + Safe Color Zone alignment
 --  - Potato Mode (60 FPS stabilizer) + Safe Auto-Sell + Auto-Replay + Draggable HUD
@@ -38,9 +40,9 @@ local SETTINGS_FILE = "nl_settings.json"
 
 local function loadSettings()
     local defaults = {
-        potatoMode = true, -- Default ON for solid 60 FPS
-        autoReplay = true, -- Default ON for automated farming
-        autoSell = true    -- Default ON for safe inventory management
+        potatoMode = true,
+        autoReplay = true,
+        autoSell = true
     }
     pcall(function()
         if typeof(isfile) == "function" and isfile(SETTINGS_FILE) then
@@ -72,20 +74,15 @@ local potatoMode = currentSettings.potatoMode
 local autoReplay = currentSettings.autoReplay
 local autoSell = currentSettings.autoSell
 local isReplaying = false
-local potatoDescendantConn = nil
 local savedLighting = {}
-local savedEffects = {}
-local savedParticles = {}
-local savedDecals = {}
-local savedMaterials = {}
 local startTime = tick()
 local currentWpIndex = 1
 local runsCompleted = 0
 local bossHitsLanded = 0
-local isCastingCombo = false
 local lastQCastTime = 0
+local lastECastTime = 0
 
-local Q_BUFF_DURATION = 4.0 -- Q passive buff (+80% damage and sprint) lasts 4.0s
+local Q_BUFF_DURATION = 4.0
 
 local function isQBuffActive()
     return (tick() - lastQCastTime) < Q_BUFF_DURATION
@@ -93,9 +90,6 @@ end
 
 -- ========================================================================
 -- 1. LOAD HIGHWAY WAYPOINTS (1,144 Points from Spawn to Odin)
---    Tier 1: Local readfile (PC - fastest, no download)
---    Tier 2: GitHub HttpGet (Mobile/Cloud with internet)
---    Tier 3: Embedded inline (always works, zero dependencies)
 -- ========================================================================
 local GITHUB_PATH_URL = "https://raw.githubusercontent.com/MayyAlterrr/maki-suite/main/paths/dqr_highway_northern_lands.json"
 local waypoints = {}
@@ -109,7 +103,6 @@ local function parseWaypoints(raw)
     end
 end
 
--- Tier 1: Try local file (PC only)
 if #waypoints == 0 then
     pcall(function()
         if typeof(isfile) == "function" and isfile("dqr_highway_northern_lands.json") then
@@ -122,7 +115,6 @@ if #waypoints == 0 then
     end)
 end
 
--- Tier 2: Fallback to GitHub (Mobile/Cloud)
 if #waypoints == 0 then
     pcall(function()
         print("[NL Master] Tier 2 (GitHub): Fetching highway waypoints...")
@@ -133,14 +125,12 @@ if #waypoints == 0 then
             pcall(function()
                 if typeof(writefile) == "function" then
                     writefile("dqr_highway_northern_lands.json", raw)
-                    print("[NL Master] Path cached locally for next run.")
                 end
             end)
         end
     end)
 end
 
--- Tier 3: Embedded inline (always works, zero dependencies)
 if #waypoints == 0 then
     print("[NL Master] Tier 3 (Embedded): Loading inline waypoints...")
     local EMBEDDED = {
@@ -351,7 +341,7 @@ local function isEReady()
     local cd = t:FindFirstChild("cooldown")
     local char = LocalPlayer.Character
     local busy = char and char:FindFirstChild("busyCasting")
-    return cd and cd.Value <= 0.05 and (busy == nil or busy.Value == false)
+    return cd and cd.Value <= 0.05 and (busy == nil or busy.Value == false) and (tick() - lastECastTime > 0.4)
 end
 
 local function getQCDRemaining()
@@ -392,6 +382,7 @@ local function castE()
             local ae = t:FindFirstChild("spellEvent") or t:FindFirstChild("abilityEvent")
             if ae then ae:FireServer() end
         end
+        lastECastTime = tick()
         return true
     end
     return false
@@ -462,10 +453,7 @@ end
 local function runSafeAutoSell()
     local remotes = ReplicatedStorage:FindFirstChild("remotes")
     local sellRemote = remotes and remotes:FindFirstChild("sellItem")
-    if not sellRemote then
-        warn("[NL Master] sellItem remote not found!")
-        return 0, 0
-    end
+    if not sellRemote then return 0, 0 end
 
     local invy = nil
     pcall(function()
@@ -475,17 +463,9 @@ local function runSafeAutoSell()
         end
     end)
 
-    if not invy or type(invy) ~= "table" then
-        return 0, 0
-    end
+    if not invy or type(invy) ~= "table" then return 0, 0 end
 
-    local payload = {
-        weapon = {},
-        ability = {},
-        chest = {},
-        helmet = {}
-    }
-
+    local payload = { weapon = {}, ability = {}, chest = {}, helmet = {} }
     local soldCount = 0
     local keptCount = 0
 
@@ -509,7 +489,7 @@ local function runSafeAutoSell()
 
     if soldCount > 0 then
         sellRemote:FireServer(payload)
-        print(string.format("[NL Master v1.0] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
+        print(string.format("[NL Master v1.1] Auto-Sell: Sold %d NL junk items (Protected %d items safely)", soldCount, keptCount))
     end
     return soldCount, keptCount
 end
@@ -548,6 +528,7 @@ stroke.Color = Color3.fromRGB(0, 180, 255)
 stroke.Thickness = 1.5
 
 local titleLabel = Instance.new("TextLabel", hudFrame)
+titleLabel.Name = "TitleLabel"
 titleLabel.Size = UDim2.new(1, 0, 0, 26)
 titleLabel.BackgroundTransparency = 1
 titleLabel.Text = "MAKI: NORTHERN LANDS"
@@ -556,15 +537,17 @@ titleLabel.TextSize = 13
 titleLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
 
 local verLabel = Instance.new("TextLabel", hudFrame)
+verLabel.Name = "VerLabel"
 verLabel.Size = UDim2.new(1, 0, 0, 14)
 verLabel.Position = UDim2.new(0, 0, 0, 22)
 verLabel.BackgroundTransparency = 1
-verLabel.Text = "v1.0 (TAS Vector APF Engine)"
+verLabel.Text = "v1.1 (TAS Standoff APF Engine)"
 verLabel.Font = Enum.Font.GothamMedium
 verLabel.TextSize = 9
 verLabel.TextColor3 = Color3.fromRGB(120, 190, 255)
 
 local phaseLabel = Instance.new("TextLabel", hudFrame)
+phaseLabel.Name = "PhaseLabel"
 phaseLabel.Size = UDim2.new(1, -16, 0, 18)
 phaseLabel.Position = UDim2.new(0, 8, 0, 40)
 phaseLabel.BackgroundTransparency = 1
@@ -575,6 +558,7 @@ phaseLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 phaseLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 local statusLabel = Instance.new("TextLabel", hudFrame)
+statusLabel.Name = "StatusLabel"
 statusLabel.Size = UDim2.new(1, -16, 0, 18)
 statusLabel.Position = UDim2.new(0, 8, 0, 58)
 statusLabel.BackgroundTransparency = 1
@@ -585,6 +569,7 @@ statusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 local cdLabel = Instance.new("TextLabel", hudFrame)
+cdLabel.Name = "CdLabel"
 cdLabel.Size = UDim2.new(1, -16, 0, 18)
 cdLabel.Position = UDim2.new(0, 8, 0, 76)
 cdLabel.BackgroundTransparency = 1
@@ -595,6 +580,7 @@ cdLabel.TextColor3 = Color3.fromRGB(80, 255, 140)
 cdLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 local statsLabel = Instance.new("TextLabel", hudFrame)
+statsLabel.Name = "StatsLabel"
 statsLabel.Size = UDim2.new(1, -16, 0, 18)
 statsLabel.Position = UDim2.new(0, 8, 0, 94)
 statsLabel.BackgroundTransparency = 1
@@ -606,6 +592,7 @@ statsLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 -- Buttons
 local toggleBtn = Instance.new("TextButton", hudFrame)
+toggleBtn.Name = "ToggleBtn"
 toggleBtn.Size = UDim2.new(0.5, -12, 0, 28)
 toggleBtn.Position = UDim2.new(0, 8, 0, 118)
 toggleBtn.Text = "STOP"
@@ -616,6 +603,7 @@ toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 5)
 
 local potatoBtn = Instance.new("TextButton", hudFrame)
+potatoBtn.Name = "PotatoBtn"
 potatoBtn.Size = UDim2.new(0.5, -12, 0, 28)
 potatoBtn.Position = UDim2.new(0.5, 4, 0, 118)
 potatoBtn.Font = Enum.Font.GothamBold
@@ -626,6 +614,7 @@ potatoBtn.Text = potatoMode and "POTATO: ON" or "POTATO: OFF"
 Instance.new("UICorner", potatoBtn).CornerRadius = UDim.new(0, 5)
 
 local replayBtn = Instance.new("TextButton", hudFrame)
+replayBtn.Name = "ReplayBtn"
 replayBtn.Size = UDim2.new(0.5, -12, 0, 28)
 replayBtn.Position = UDim2.new(0, 8, 0, 152)
 replayBtn.Font = Enum.Font.GothamBold
@@ -636,6 +625,7 @@ replayBtn.Text = autoReplay and "REPLAY: ON" or "REPLAY: OFF"
 Instance.new("UICorner", replayBtn).CornerRadius = UDim.new(0, 5)
 
 local autoSellBtn = Instance.new("TextButton", hudFrame)
+autoSellBtn.Name = "AutoSellBtn"
 autoSellBtn.Size = UDim2.new(0.5, -12, 0, 28)
 autoSellBtn.Position = UDim2.new(0.5, 4, 0, 152)
 autoSellBtn.Font = Enum.Font.GothamBold
@@ -646,6 +636,7 @@ autoSellBtn.Text = autoSell and "SELL: ON" or "SELL: OFF"
 Instance.new("UICorner", autoSellBtn).CornerRadius = UDim.new(0, 5)
 
 local sellNowBtn = Instance.new("TextButton", hudFrame)
+sellNowBtn.Name = "SellNowBtn"
 sellNowBtn.Size = UDim2.new(1, -16, 0, 28)
 sellNowBtn.Position = UDim2.new(0, 8, 0, 186)
 sellNowBtn.Font = Enum.Font.GothamBold
@@ -681,7 +672,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Button Click Handlers
 toggleBtn.MouseButton1Click:Connect(function()
     isRunning = not isRunning
     toggleBtn.Text = isRunning and "STOP" or "START"
@@ -771,7 +761,7 @@ local BOSS_NAMES = {
     ["Odin Reincarnation"] = true
 }
 
-local PACK_CLUSTER_THRESHOLD = 32 -- studs
+local PACK_CLUSTER_THRESHOLD = 35 -- studs
 
 local function checkAutoStart()
     local started = Workspace:FindFirstChild("dungeonStarted")
@@ -894,7 +884,7 @@ local function getTargetCluster(myPos)
 end
 
 -- ========================================================================
--- 6. ARTIFICIAL POTENTIAL FIELD (APF) HAZARD SCANNER & EVASION SYNTHESIZER
+-- 6. ARTIFICIAL POTENTIAL FIELD (APF) HAZARD SCANNER
 -- ========================================================================
 local KNOWN_HAZARD_NAMES = {
     spearmanstrike = true,
@@ -923,7 +913,7 @@ local function scanActiveHazards(myPos, radius)
                     local d = (Vector3.new(c.Position.X, 0, c.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
                     if d <= radius then
                         local rad = math.max(c.Size.X, c.Size.Z) * 0.5
-                        table.insert(hazards, {pos = c.Position, radius = rad, part = c, dist = d})
+                        table.insert(hazards, {pos = c.Position, radius = rad, dist = d})
                     end
                 elseif c:IsA("Model") then
                     local p = c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
@@ -931,7 +921,7 @@ local function scanActiveHazards(myPos, radius)
                         local d = (Vector3.new(p.Position.X, 0, p.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
                         if d <= radius then
                             local rad = math.max(p.Size.X, p.Size.Z) * 0.5
-                            table.insert(hazards, {pos = p.Position, radius = rad, part = p, dist = d})
+                            table.insert(hazards, {pos = p.Position, radius = rad, dist = d})
                         end
                     end
                 end
@@ -939,7 +929,6 @@ local function scanActiveHazards(myPos, radius)
         end
     end
 
-    -- Direct workspace projectiles (spearmanStrike, warriorLineStrike, etc.)
     for _, c in ipairs(Workspace:GetChildren()) do
         if c:IsA("BasePart") and c.CanCollide == false and c.Transparency < 1 then
             local nLow = c.Name:lower()
@@ -947,7 +936,7 @@ local function scanActiveHazards(myPos, radius)
                 local d = (Vector3.new(c.Position.X, 0, c.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
                 if d <= radius then
                     local rad = math.max(c.Size.X, c.Size.Z) * 0.5
-                    table.insert(hazards, {pos = c.Position, radius = rad, part = c, dist = d})
+                    table.insert(hazards, {pos = c.Position, radius = rad, dist = d})
                 end
             end
         end
@@ -956,7 +945,6 @@ local function scanActiveHazards(myPos, radius)
     return hazards
 end
 
--- Check if Bob The Frost Giant safe spot circle is active
 local function getActiveSafeDome(myPos)
     local safe = Workspace:FindFirstChild("safeSpotCircle") or Workspace:FindFirstChild("SecondBossShowSafeSpot")
     if not safe then
@@ -981,7 +969,7 @@ end
 task.spawn(function()
     while _G.NL_AUTOFARM_RUNNING do
         RunService.Heartbeat:Wait()
-        if not isRunning or isCastingCombo or isReplaying then continue end
+        if not isRunning or isReplaying then continue end
 
         local char = LocalPlayer.Character
         local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
@@ -1044,7 +1032,7 @@ task.spawn(function()
         local targetWp = waypoints[lookaheadIdx] or waypoints[currentWpIndex]
 
         -- ================================================================
-        -- ARTIFICIAL POTENTIAL FIELD (APF) FORCE VECTOR COMPUTATION
+        -- ARTIFICIAL POTENTIAL FIELD (APF) FORCE VECTOR SYNTHESIS
         -- ================================================================
         local F_goal = Vector3.zero
         local F_hazard = Vector3.zero
@@ -1053,50 +1041,49 @@ task.spawn(function()
         local F_separation = Vector3.zero
         local inHazardEscape = false
 
-        -- 1. F_goal: Pull towards forward highway waypoint
-        if targetWp then
-            local toWp = Vector3.new(targetWp.X - myPos.X, 0, targetWp.Z - myPos.Z)
-            if toWp.Magnitude > 0.1 then
-                F_goal = toWp.Unit * 1.0
+        -- 1. F_goal: ONLY active when NO mobs are alive in front of us!
+        --    When mobs are present, F_goal is 0 so the bot NEVER walks into danger!
+        if target == nil then
+            if targetWp then
+                local toWp = Vector3.new(targetWp.X - myPos.X, 0, targetWp.Z - myPos.Z)
+                if toWp.Magnitude > 0.1 then
+                    F_goal = toWp.Unit * 2.0
+                end
             end
         end
 
         -- 2. F_hazard: Active indicators, projectiles & safe zones
         local safeDomePos = getActiveSafeDome(myPos)
         if safeDomePos then
-            -- Safe Dome has absolute priority! Sprint directly inside
             local toSafe = Vector3.new(safeDomePos.X - myPos.X, 0, safeDomePos.Z - myPos.Z)
-            if toSafe.Magnitude > 5 then
-                F_hazard = toSafe.Unit * 5.0
+            if toSafe.Magnitude > 4 then
+                F_hazard = toSafe.Unit * 6.0
                 inHazardEscape = true
                 statusLabel.Text = "Status: RETREATING TO SAFE DOME!"
                 statusLabel.TextColor3 = Color3.fromRGB(0, 255, 180)
             end
         else
-            local activeHazards = scanActiveHazards(myPos, 60)
+            local activeHazards = scanActiveHazards(myPos, 65)
             for _, h in ipairs(activeHazards) do
                 local toHazard = Vector3.new(myPos.X - h.pos.X, 0, myPos.Z - h.pos.Z)
                 local distH = toHazard.Magnitude
-                local safeDist = h.radius + 4.0
+                local safeDist = h.radius + 4.5
 
                 if distH < safeDist then
-                    -- Inside danger area: exponential escape
                     inHazardEscape = true
                     local exitDir = distH > 0.1 and toHazard.Unit or Vector3.new(1, 0, 0)
-                    local exitForce = 3.5 + (safeDist - distH) * 0.5
+                    local exitForce = 4.0 + (safeDist - distH) * 0.6
                     F_hazard = F_hazard + exitDir * exitForce
                 elseif distH < (safeDist + 16.0) then
-                    -- Proximity warning: smooth tangential deflection
                     local warnDir = toHazard.Unit
                     local decay = (safeDist + 16.0 - distH) / 16.0
                     local tangent = Vector3.new(-warnDir.Z, 0, warnDir.X)
-                    if tangent:Dot(F_goal) < 0 then tangent = -tangent end
-                    F_hazard = F_hazard + (warnDir * 0.8 + tangent * 1.2) * decay
+                    F_hazard = F_hazard + (warnDir * 1.0 + tangent * 1.5) * decay
                 end
             end
         end
 
-        -- 3. F_predict: Check mob animation windups (e.g. Spearman thrust, Mage beam)
+        -- 3. F_predict: Proactive lateral windup avoidance (Spearman thrust cone, Mage beam)
         if target and not inHazardEscape then
             local nearbyMobs = target.isBoss and {target} or (target.mobs or {})
             for _, m in ipairs(nearbyMobs) do
@@ -1104,7 +1091,7 @@ task.spawn(function()
                 local mHum = m.hum
                 if mHrp and mHum then
                     local d = (Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z) - Vector3.new(myPos.X, 0, myPos.Z)).Magnitude
-                    if d <= 50 then
+                    if d <= 55 then
                         local isAttacking = false
                         pcall(function()
                             local anim = mHum:FindFirstChildOfClass("Animator")
@@ -1122,11 +1109,10 @@ task.spawn(function()
                         if isAttacking then
                             local look = mHrp.CFrame.LookVector
                             local toPlayer = (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(mHrp.Position.X, 0, mHrp.Position.Z)).Unit
-                            if look:Dot(toPlayer) > 0.5 then
-                                -- We are inside enemy forward cone: initiate instantaneous lateral slide!
+                            if look:Dot(toPlayer) > 0.4 then
                                 local right = mHrp.CFrame.RightVector
                                 local lateral = (toPlayer:Dot(right) >= 0) and right or -right
-                                F_predict = F_predict + Vector3.new(lateral.X, 0, lateral.Z).Unit * 2.2
+                                F_predict = F_predict + Vector3.new(lateral.X, 0, lateral.Z).Unit * 3.0
                             end
                         end
                     end
@@ -1134,132 +1120,109 @@ task.spawn(function()
             end
         end
 
-        -- 4. F_orbit & F_separation: Target engagement & pack herding
+        -- 4. F_separation & F_orbit: TACTICAL STANDOFF KITING GUARD
+        --    Maintains 52-60 studs distance! NEVER lets melee mobs (< 48 studs) close in!
         if target then
             local centroid = target.centerPos
             local toCentroid = Vector3.new(centroid.X - myPos.X, 0, centroid.Z - myPos.Z)
             local distC = toCentroid.Magnitude
-            local targetRadius = target.isBoss and 65.0 or 52.0
+            local idealStandoff = target.isBoss and 62.0 or 54.0
 
-            -- Boss specific distance modifications
-            if target.isBoss and target.name == "Midgardian Champion" then
-                targetRadius = 60.0 -- Optimal jump slam recovery punish distance
-            elseif target.isBoss and target.name == "Bob The Frost Giant" then
-                targetRadius = 65.0 -- Avoid frost stomp, stay in beam jump arc
-            elseif target.isBoss and target.name:find("Odin") then
-                targetRadius = 55.0 -- Stay inside center rune ring
+            if target.isBoss and target.name == "Bob The Frost Giant" then
+                idealStandoff = 66.0
             end
 
-            -- Melee mob separation pushback (< 42 studs)
-            if distC < 42.0 then
-                local pushDir = -toCentroid.Unit
-                local pushForce = ((42.0 - distC) / 20.0) * 2.5
-                F_separation = pushDir * pushForce
-            elseif distC > (targetRadius + 12.0) then
-                -- Approach pack towards sweet spot
-                F_orbit = F_orbit + toCentroid.Unit * 1.2
+            -- RETREAT FORCE: If mobs are closer than ideal standoff, push away with high priority!
+            if distC < idealStandoff then
+                local retreatDir = -toCentroid.Unit
+                local severity = (idealStandoff - distC) / 15.0
+                local retreatPower = 2.5 + severity * 2.5 -- up to 5.0 retreat force
+                F_separation = retreatDir * retreatPower
+            elseif distC > (idealStandoff + 14.0) then
+                -- Step closer if mobs fall too far behind
+                local approachDir = toCentroid.Unit
+                F_orbit = approachDir * 1.2
             end
 
-            -- Tangential circular orbit (herds mobs into tight clump)
+            -- TANGENTIAL ORBIT: Smooth circular glide around mob centroid
             local radial = -toCentroid.Unit
             local tangent = Vector3.new(-radial.Z, 0, radial.X)
-            if tangent:Dot(F_goal) < 0 then tangent = -tangent end
-            F_orbit = F_orbit + tangent * 1.5
+            F_orbit = F_orbit + tangent * 2.0
         end
 
         -- ================================================================
-        -- OPPORTUNISTIC COMBAT GATING (Q BUFF + E DETONATION)
+        -- OPPORTUNISTIC MOTION COMBAT GATING (Q BUFF + E DETONATION)
         -- ================================================================
-        local canStrike = false
-        local strikeCentroid = target and target.centerPos or nil
-
         if target then
             local dist = target.dist
-            local strikeMax = target.isBoss and 78.0 or 65.0
-            local strikeMin = 35.0
 
-            -- Pre-buff Q on the run at 115 studs
+            -- Pre-buff Q on the run at <= 115 studs
             if dist <= 115 and isQReady() then
                 castQ()
-                statusLabel.Text = "Status: Pre-Buffing Q on the Run (+80%)"
-                statusLabel.TextColor3 = Color3.fromRGB(80, 255, 160)
             end
 
-            -- Check E Strike conditions:
-            -- 1. In safe zone (not in critical hazard escape)
-            -- 2. In strike range (35 to 65 studs)
-            -- 3. E is ready
-            -- 4. Q buff active (or Q ready to pop immediately)
-            if not inHazardEscape and dist >= strikeMin and dist <= strikeMax and isEReady() then
+            -- Strike E condition:
+            -- 1. Not in critical hazard area
+            -- 2. Safely out of melee danger (dist >= 40 studs)
+            -- 3. In range of Flame Shuriken (dist <= 72 studs)
+            -- 4. E is ready!
+            if not inHazardEscape and dist >= 40 and dist <= 72 and isEReady() then
                 if not isQBuffActive() and isQReady() then
                     castQ()
-                    task.wait(0.12)
+                    task.wait(0.08)
                 end
 
                 if isQBuffActive() then
-                    canStrike = true
+                    -- Non-stop snap aim & fire: DO NOT FREEZE CHARACTER!
+                    local lookPos = Vector3.new(target.centerPos.X, hrp.Position.Y, target.centerPos.Z)
+                    hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
+                    castE()
+
+                    if target.isBoss then
+                        bossHitsLanded = bossHitsLanded + 1
+                    end
                 end
             end
         elseif isQReady() then
-            -- On empty highway: pop Q on cooldown for top sprint speed
+            -- Empty highway transit: pop Q on cooldown for top travel speed
             castQ()
         end
 
-        -- Strike Execution
-        if canStrike and strikeCentroid then
-            isCastingCombo = true
-            hum:Move(Vector3.zero, false)
-            hum.AutoRotate = false
+        -- ================================================================
+        -- CONTINUOUS NATIVE VELOCITY EXECUTION (Humanoid:Move)
+        -- ================================================================
+        local V_composite = F_goal * 1.0 + F_hazard * 1.0 + F_predict * 1.0 + F_separation * 1.0 + F_orbit * 1.0
 
-            -- Snap aim directly at pack / boss centroid
-            local lookPos = Vector3.new(strikeCentroid.X, hrp.Position.Y, strikeCentroid.Z)
-            hrp.CFrame = CFrame.lookAt(hrp.Position, lookPos)
-
-            phaseLabel.Text = target.isBoss and string.format("BOSS: %s", target.name) or string.format("PACK: %d mobs", target.count or 1)
-            statusLabel.Text = "Status: NUKE! Detonating E with Q Buff!"
-            statusLabel.TextColor3 = Color3.fromRGB(255, 60, 180)
-
-            castE()
+        if inHazardEscape then
+            phaseLabel.Text = "EVADING: Critical Hazard Area"
+            statusLabel.Text = "Status: Vector Field SDF Evasion"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+        elseif target then
             if target.isBoss then
-                bossHitsLanded = bossHitsLanded + 1
+                phaseLabel.Text = string.format("BOSS: %s (%.0f studs)", target.name, target.dist)
+                statusLabel.Text = string.format("Status: Standoff Kiting (E CD: %.1fs)", eCd)
+            else
+                phaseLabel.Text = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count, target.dist)
+                statusLabel.Text = string.format("Status: Standoff Kiting & Herding (E CD: %.1fs)", eCd)
             end
-            task.wait(0.35)
-            isCastingCombo = false
+            statusLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
         else
-            -- Continuous Vector Movement via Humanoid:Move
+            phaseLabel.Text = string.format("Highway %d/%d", currentWpIndex, totalWps)
+            statusLabel.Text = string.format("Status: Native Sprint Transit (wp %d)", currentWpIndex)
+            statusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
+        end
+
+        local vHoriz = Vector3.new(V_composite.X, 0, V_composite.Z)
+        if vHoriz.Magnitude > 0.05 then
             hum.AutoRotate = true
-            local V_composite = F_goal * 1.0 + F_hazard * 1.0 + F_predict * 1.0 + F_separation * 1.0 + F_orbit * 1.0
+            hum:Move(vHoriz.Unit, false)
+        else
+            hum:Move(Vector3.zero, false)
+        end
 
-            if inHazardEscape then
-                phaseLabel.Text = "EVADING: Critical Hazard Area"
-                statusLabel.Text = "Status: Vector Field SDF Evasion"
-                statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-            elseif target then
-                if target.isBoss then
-                    phaseLabel.Text = string.format("BOSS: %s (%.0f studs)", target.name, target.dist)
-                    statusLabel.Text = string.format("Status: Orbital Standoff (E CD: %.1fs)", eCd)
-                else
-                    phaseLabel.Text = string.format("%s: %d mobs (%.0f studs)", target.room:upper(), target.count, target.dist)
-                    statusLabel.Text = string.format("Status: Orbital Kiting & Herding (E CD: %.1fs)", eCd)
-                end
-                statusLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
-            else
-                phaseLabel.Text = string.format("Highway %d/%d", currentWpIndex, totalWps)
-                statusLabel.Text = string.format("Status: Native Sprint Transit (wp %d)", currentWpIndex)
-                statusLabel.TextColor3 = Color3.fromRGB(120, 220, 255)
-            end
-
-            local vHoriz = Vector3.new(V_composite.X, 0, V_composite.Z)
-            if vHoriz.Magnitude > 0.05 then
-                hum:Move(vHoriz.Unit, false)
-            else
-                hum:Move(Vector3.zero, false)
-            end
-
-            -- Anti-stuck watchdog: hop over any lip or bump automatically
-            if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 2.5 then
-                hum.Jump = true
-            end
+        -- Anti-stuck watchdog: hop over lips or bumps automatically
+        if hum.MoveDirection.Magnitude > 0.1 and hrp.AssemblyLinearVelocity.Magnitude < 2.5 then
+            hum.Jump = true
         end
     end
 end)
@@ -1314,7 +1277,7 @@ task.spawn(function()
         if getDungeonFinished() then
             isReplaying = true
             runsCompleted = runsCompleted + 1
-            print(string.format("[NL Master v1.0] Dungeon Victory detected! Total runs: %d", runsCompleted))
+            print(string.format("[NL Master v1.1] Dungeon Victory detected! Total runs: %d", runsCompleted))
 
             for sec = 5, 1, -1 do
                 if not _G.NL_AUTOFARM_RUNNING or not autoReplay then break end
@@ -1353,10 +1316,9 @@ task.spawn(function()
             local replayRemote = remotes and remotes:FindFirstChild("replayDungeon")
             if replayRemote then
                 replayRemote:FireServer(data)
-                print("[NL Master v1.0] Fired replayDungeon:FireServer successfully!")
+                print("[NL Master v1.1] Fired replayDungeon:FireServer successfully!")
             end
 
-            -- Wait for reset
             for _ = 1, 30 do
                 task.wait(0.5)
                 if not getDungeonFinished() then break end
@@ -1366,21 +1328,20 @@ task.spawn(function()
             bossHitsLanded = 0
             isReplaying = false
             startTime = tick()
-            print("[NL Master v1.0] Dungeon reset confirmed! Restarting run loop...")
+            print("[NL Master v1.1] Dungeon reset confirmed! Restarting run loop...")
         end
     end
 end)
 
--- Character respawn watcher: snap to closest waypoint
 LocalPlayer.CharacterAdded:Connect(function(newChar)
     task.wait(1.0)
     local hrp = newChar:WaitForChild("HumanoidRootPart", 10)
     if hrp then
         currentWpIndex = findClosestWaypointIndex(hrp.Position, 1, totalWps)
-        print(string.format("[NL Master v1.0] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
+        print(string.format("[NL Master v1.1] Respawn detected! Snapped to highway waypoint %d", currentWpIndex))
     end
 end)
 
 print("========================================================================")
-print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.0 successfully loaded!")
+print("[MAKI: NORTHERN LANDS] Master Auto-Farm Engine v1.1 successfully loaded!")
 print("========================================================================")
