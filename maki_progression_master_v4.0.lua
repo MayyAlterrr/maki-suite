@@ -197,12 +197,21 @@ end
 
 loadConfig()
 
-local isCarry = false
+local isCarry = true
 local function updateCarryRole()
     if Config.CarryUsername and #Config.CarryUsername > 0 then
         isCarry = (LocalPlayer.Name:lower() == Config.CarryUsername:lower())
     else
-        isCarry = false
+        local isAlt = false
+        if Config.AltUsernames and #Config.AltUsernames > 0 then
+            for _, alt in ipairs(Config.AltUsernames) do
+                if LocalPlayer.Name:lower() == tostring(alt):lower() then
+                    isAlt = true
+                    break
+                end
+            end
+        end
+        isCarry = not isAlt
     end
 end
 updateCarryRole()
@@ -789,44 +798,49 @@ task.spawn(function()
     end
 end)
 
--- Playback loop for Levels 60-130 (With Smart Respawn Recovery)
+-- Playback loop for Levels 60-130 (With Smart Respawn Recovery & Auto Map Loading)
 local lastCarryPosBeforeTick = nil
 task.spawn(function()
     while _G.MAKI_MASTER_SUITE_RUNNING do
         task.wait(0.02)
         local engine = getCurrentDungeonEngine()
-        if engine == "waypoint" and isCarry and isDungeon() and isPlaybackActive and #loadedWaypoints > 0 and currentWpIndex <= #loadedWaypoints then
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if engine == "waypoint" and isCarry and isDungeon() then
+            if not isPlaybackActive or #loadedWaypoints == 0 then
+                loadCurrentDungeonMap()
+            end
+            if isPlaybackActive and #loadedWaypoints > 0 and currentWpIndex <= #loadedWaypoints then
+                local char = LocalPlayer.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-            if hrp and hum and hum.Health > 0 then
-                local myPos = hrp.Position
+                if hrp and hum and hum.Health > 0 then
+                    local myPos = hrp.Position
 
-                if lastCarryPosBeforeTick and (myPos - lastCarryPosBeforeTick).Magnitude >= 28.0 then
-                    local closestIdx, cDist = findClosestWaypointIndex(myPos, loadedWaypoints)
-                    currentWpIndex = closestIdx
-                    print(string.format("[Maki Waypoint 🛡️] Respawn detected! Synced to Waypoint %d / %d (Dist: %.1fs)", closestIdx, #loadedWaypoints, cDist))
-                end
-                lastCarryPosBeforeTick = myPos
-
-                local targetPoint = loadedWaypoints[currentWpIndex]
-                local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                local dist = (myPos - targetPos).Magnitude
-
-                if dist <= 3.8 then
-                    currentWpIndex = currentWpIndex + 1
-                    if currentWpIndex <= #loadedWaypoints then
-                        targetPoint = loadedWaypoints[currentWpIndex]
-                        targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                    if lastCarryPosBeforeTick and (myPos - lastCarryPosBeforeTick).Magnitude >= 28.0 then
+                        local closestIdx, cDist = findClosestWaypointIndex(myPos, loadedWaypoints)
+                        currentWpIndex = closestIdx
+                        print(string.format("[Maki Waypoint 🛡️] Respawn detected! Synced to Waypoint %d / %d (Dist: %.1fs)", closestIdx, #loadedWaypoints, cDist))
                     end
-                end
+                    lastCarryPosBeforeTick = myPos
 
-                if currentWpIndex <= #loadedWaypoints then
-                    hum:MoveTo(targetPos)
+                    local targetPoint = loadedWaypoints[currentWpIndex]
+                    local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                    local dist = (myPos - targetPos).Magnitude
+
+                    if dist <= 3.8 then
+                        currentWpIndex = currentWpIndex + 1
+                        if currentWpIndex <= #loadedWaypoints then
+                            targetPoint = loadedWaypoints[currentWpIndex]
+                            targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                        end
+                    end
+
+                    if currentWpIndex <= #loadedWaypoints then
+                        hum:MoveTo(targetPos)
+                    end
+                else
+                    lastCarryPosBeforeTick = nil
                 end
-            else
-                lastCarryPosBeforeTick = nil
             end
         end
     end
