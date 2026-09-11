@@ -1518,6 +1518,8 @@ local function carryCreateAndLaunch()
 end
 
 -- ========================================================================
+-- ========================================================================
+-- ========================================================================
 --  [MODULE 5] MASTER PROGRESSION, AUTO-START & HARDCORE DEFEAT REPLAY
 -- ========================================================================
 local returnToLobbyTriggered = false
@@ -1536,13 +1538,29 @@ local function returnPartyToLobby()
 end
 
 local function areAllAltsInDungeon()
-    if #Config.AltUsernames == 0 then return true end
-    for _, altName in ipairs(Config.AltUsernames) do
-        if not Players:FindFirstChild(altName) then
-            return false
+    loadConfig()
+    local altList = Config.AltUsernames or {}
+    if #altList == 0 then
+        return true, 0, 0
+    end
+
+    local loadedCount = 0
+    for _, altName in ipairs(altList) do
+        local cleanName = tostring(altName):gsub("%s+", ""):lower()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name:lower() == cleanName then
+                local char = p.Character
+                local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+                if hrp then
+                    getLivePlayerLevel(p.Name)
+                    loadedCount = loadedCount + 1
+                end
+                break
+            end
         end
     end
-    return true
+
+    return (loadedCount >= #altList), loadedCount, #altList
 end
 
 local function triggerCarryStartDungeon()
@@ -1553,6 +1571,7 @@ local function triggerCarryStartDungeon()
             pcall(function()
                 for _, c in ipairs(getconnections(sBtn1.Activated)) do c:Fire() end
                 for _, c in ipairs(getconnections(sBtn1.MouseButton1Click)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn1.MouseButton1Down)) do c:Fire() end
             end)
         end
         local qG = pG:FindFirstChild("queueGui")
@@ -1561,7 +1580,21 @@ local function triggerCarryStartDungeon()
             pcall(function()
                 for _, c in ipairs(getconnections(sBtn2.Activated)) do c:Fire() end
                 for _, c in ipairs(getconnections(sBtn2.MouseButton1Click)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn2.MouseButton1Down)) do c:Fire() end
             end)
+        end
+        for _, btn in ipairs(pG:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                local bName = btn.Name:lower()
+                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                if bName:find("start") or bText:find("start") or bName:find("ready") or bText:find("ready") then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                    end)
+                end
+            end
         end
     end
 
@@ -1570,32 +1603,75 @@ local function triggerCarryStartDungeon()
     if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
 end
 
--- Master Match State & Replay Handler
+-- Staging Room Auto-Start & Alt Synchronization Watcher Loop
+task.spawn(function()
+    while _G.MAKI_MASTER_SUITE_RUNNING do
+        task.wait(0.3)
+        if isDungeon() then
+            local prog = getDungeonProgress()
+            local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "" or not prog)
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local qG = pG and pG:FindFirstChild("queueGui")
+            local sBtn = (pG and pG:FindFirstChild("startButton", true)) or (qG and qG:FindFirstChild("startButton", true))
+
+            if isPreStart and ((qG and qG.Enabled) or (sBtn and sBtn.Visible)) then
+                if isCarry then
+                    -- Auto-approve any pending join requests in staging
+                    if Config.AutoAcceptJoins and pG then
+                        for _, c in ipairs(pG:GetChildren()) do
+                            if c.Name == "joinRequestConfirm" then
+                                instantAcceptAndDestroyPopup(c)
+                            end
+                        end
+                        if respondJoinRequestRemote and Config.AltUsernames then
+                            for _, altName in ipairs(Config.AltUsernames) do
+                                if not Players:FindFirstChild(altName) then
+                                    pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
+                                end
+                            end
+                        end
+                    end
+
+                    -- Check if all alts are inside and loaded
+                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    if allReady then
+                        triggerCarryStartDungeon()
+                    end
+                else
+                    -- Alt: Ready up and click ready buttons
+                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                    if pG then
+                        for _, btn in ipairs(pG:GetDescendants()) do
+                            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                local bName = btn.Name:lower()
+                                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                                if bName:find("ready") or bText:find("ready") then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Master Match State, Victory/Defeat Auto-Retry & Lobby Watcher
 task.spawn(function()
     while _G.MAKI_MASTER_SUITE_RUNNING do
         task.wait(0.8)
         if isDungeon() then
             lobbyVerificationActive = false
             local prog = getDungeonProgress()
-            local engine = getCurrentDungeonEngine()
 
-            if isCarry and not isPlaybackActive and engine == "waypoint" then
-                local altsReady = areAllAltsInDungeon()
-                if altsReady then
-                    print("[Maki Staging] 👥 All Alts present in Staging Room! Starting dungeon...")
-                    triggerCarryStartDungeon()
-                    loadCurrentDungeonMap()
-                end
-            elseif isCarry and engine == "mhc" then
-                local altsReady = areAllAltsInDungeon()
-                if altsReady then
-                    triggerCarryStartDungeon()
-                end
-            elseif not isCarry then
+            if not isCarry then
                 if not altSpawnPosition then
                     lockAltSpawn()
                 end
-
                 local carryInServer = (Config.CarryUsername and #Config.CarryUsername > 0) and Players:FindFirstChild(Config.CarryUsername) or nil
                 if not carryInServer and not altLobbyExitTriggered then
                     exitAltToMainLobby()
@@ -1635,7 +1711,7 @@ task.spawn(function()
             end
 
             -- ================================================================
-            --  HARDCORE DEFEAT / WIPE REPLAY HANDLER (ZERO LOBBY RELOADS)
+            --  HARDCORE DEFEAT / WIPE REPLAY HANDLER
             -- ================================================================
             if prog == "defeat" or prog == "failed" or prog == "gameover" or prog == "loss" then
                 print("[Maki Hardcore 💀] Defeat/Wipe detected! Instantly retrying match in-place...")
@@ -1688,7 +1764,6 @@ task.spawn(function()
     end
 end)
 
--- ========================================================================
 --  [MODULE 9] ENHANCED MULTI-TAB GUI (DASHBOARD, ALTS, DISCORD)
 -- ========================================================================
 local pGuiRef = LocalPlayer:WaitForChild("PlayerGui")
