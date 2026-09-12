@@ -811,27 +811,6 @@ local function isMatchUnlocked()
     return true
 end
 
--- Dynamic Wall Collider Remover
-task.spawn(function()
-    while _G.MAKI_MASTER_SUITE_RUNNING do
-        if isCarry and isDungeon() and isMatchUnlocked() then
-            local dungeon = Workspace:FindFirstChild("dungeon") or Workspace
-            for _, desc in ipairs(dungeon:GetDescendants()) do
-                if desc:IsA("BasePart") then
-                    local pName = desc.Name:lower()
-                    local parName = desc.Parent and desc.Parent.Name:lower() or ""
-                    if pName:find("door") or pName:find("gate") or pName:find("barrier") or pName:find("blocker") or parName:find("doors") or parName:find("gates") or desc.Transparency >= 0.9 then
-                        if not pName:find("floor") and not pName:find("ground") and not pName:find("step") and not pName:find("stair") then
-                            desc.CanCollide = false
-                        end
-                    end
-                end
-            end
-        end
-        task.wait(1.5)
-    end
-end)
-
 -- Playback loop for Levels 60-130 (With Smart Respawn Recovery & Auto Map Loading)
 local lastCarryPosBeforeTick = nil
 task.spawn(function()
