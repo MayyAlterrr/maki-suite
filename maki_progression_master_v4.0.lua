@@ -777,10 +777,44 @@ local function findClosestWaypointIndex(pos, points)
     return best, minD
 end
 
+-- ========================================================================
+--  [MATCH UNLOCK & COUNTDOWN BUFFER ENGINE]
+-- ========================================================================
+local matchStartUnlockTime = 0
+
+local function isMatchUnlocked()
+    if isMainLobby() then
+        matchStartUnlockTime = 0
+        return false
+    end
+
+    -- If in the middle of the 3.8s countdown buffer after clicking start, stay locked
+    if matchStartUnlockTime > 0 and os.clock() < matchStartUnlockTime then
+        return false
+    end
+
+    -- If we are already past the countdown buffer, we are 100% unlocked
+    if matchStartUnlockTime > 0 and os.clock() >= matchStartUnlockTime then
+        return true
+    end
+
+    -- Before clicking start: if staging GUI exists, stay locked
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        local qG = pG and pG:FindFirstChild("queueGui")
+        local sBtn = (pG and pG:FindFirstChild("startButton", true)) or (qG and qG:FindFirstChild("startButton", true))
+        if (qG and qG.Enabled) or (sBtn and sBtn.Visible) then
+            return false
+        end
+    end
+
+    return true
+end
+
 -- Dynamic Wall Collider Remover
 task.spawn(function()
     while _G.MAKI_MASTER_SUITE_RUNNING do
-        if isCarry and isDungeon() then
+        if isCarry and isDungeon() and isMatchUnlocked() then
             local dungeon = Workspace:FindFirstChild("dungeon") or Workspace
             for _, desc in ipairs(dungeon:GetDescendants()) do
                 if desc:IsA("BasePart") then
@@ -814,7 +848,10 @@ task.spawn(function()
                 local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
                 if hrp and hum and hum.Health > 0 then
-                    local myPos = hrp.Position
+                    if not isMatchUnlocked() then
+                        hum:MoveTo(hrp.Position)
+                    else
+                        local myPos = hrp.Position
 
                     if lastCarryPosBeforeTick and (myPos - lastCarryPosBeforeTick).Magnitude >= 28.0 then
                         local closestIdx, cDist = findClosestWaypointIndex(myPos, loadedWaypoints)
@@ -838,6 +875,7 @@ task.spawn(function()
                     if currentWpIndex <= #loadedWaypoints then
                         hum:MoveTo(targetPos)
                     end
+                    end
                 else
                     lastCarryPosBeforeTick = nil
                 end
@@ -859,7 +897,10 @@ task.spawn(function()
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
             if hrp and hum and hum.Health > 0 then
-                local bossModel = nil
+                if not isMatchUnlocked() then
+                    hum:MoveTo(hrp.Position)
+                else
+                    local bossModel = nil
                 local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon")
                 if enemiesFolder then
                     for _, c in ipairs(enemiesFolder:GetChildren()) do
@@ -879,6 +920,7 @@ task.spawn(function()
                         hum:MoveTo(standPos)
                         hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
                     end
+                end
                 end
             end
         end
@@ -1032,6 +1074,10 @@ task.spawn(function()
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
             if hrp and hum and hum.Health > 0 then
+                if not isMatchUnlocked() then
+                    hum:MoveTo(hrp.Position)
+                    task.wait(0.05)
+                else
                 local myPos = hrp.Position
                 local now = os.clock()
 
@@ -1134,6 +1180,7 @@ task.spawn(function()
                             end
                         end
                     end
+                end
                 end
             else
                 lastMhcPosBeforeTick = nil
@@ -1564,6 +1611,10 @@ local function areAllAltsInDungeon()
 end
 
 local function triggerCarryStartDungeon()
+    if matchStartUnlockTime == 0 then
+        matchStartUnlockTime = os.clock() + 3.8
+        print("[Maki Staging ⏳] Staging start triggered! Holding position for 3.8s countdown & barrier drop...")
+    end
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
         local sBtn1 = pG:FindFirstChild("startButton") and pG.startButton:FindFirstChild("TextButton", true)
@@ -1701,6 +1752,7 @@ task.spawn(function()
                         task.wait(2.5)
                         if replayRemote then pcall(function() replayRemote:FireServer() end) end
                         if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                        matchStartUnlockTime = 0
                         currentWpIndex = 1
                         mhcCurrentIndex = 1
                     end
@@ -1748,6 +1800,7 @@ task.spawn(function()
             altLobbyExitTriggered = false
             altSpawnPosition = nil
             isPlaybackActive = false
+            matchStartUnlockTime = 0
             currentWpIndex = 1
             mhcCurrentIndex = 1
 
