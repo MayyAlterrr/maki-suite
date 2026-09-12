@@ -740,39 +740,6 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ========================================================================
--- ========================================================================
---  [STAGING GATE GUARD] 100% KICK-PROOF PRE-MATCH MOVEMENT FREEZE
--- ========================================================================
-local lastStagingTime = 0
-local function isDungeonMatchActive()
-    if isMainLobby() then
-        lastStagingTime = os.clock()
-        return false
-    end
-
-    local pG = LocalPlayer:FindFirstChild("PlayerGui")
-    if pG then
-        local qG = pG:FindFirstChild("queueGui")
-        if qG and qG.Enabled then
-            lastStagingTime = os.clock()
-            return false
-        end
-
-        local sBtn = pG:FindFirstChild("startButton", true)
-        if sBtn and sBtn.Visible then
-            lastStagingTime = os.clock()
-            return false
-        end
-    end
-
-    -- 0.6s buffer after queueGui closes to allow barriers to fully open/vanish
-    if (os.clock() - lastStagingTime) < 0.6 then
-        return false
-    end
-
-    return true
-end
-
 --  [MODULE 2] GOLDEN MASTER WAYPOINT ENGINE (LEVELS 60 - 130)
 -- ========================================================================
 local loadedWaypoints = {}
@@ -847,33 +814,29 @@ task.spawn(function()
                 local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
                 if hrp and hum and hum.Health > 0 then
-                    if not isDungeonMatchActive() then
-                        hum:MoveTo(hrp.Position)
-                    else
-                        local myPos = hrp.Position
+                    local myPos = hrp.Position
 
-                        if lastCarryPosBeforeTick and (myPos - lastCarryPosBeforeTick).Magnitude >= 28.0 then
-                            local closestIdx, cDist = findClosestWaypointIndex(myPos, loadedWaypoints)
-                            currentWpIndex = closestIdx
-                            print(string.format("[Maki Waypoint 🛡️] Respawn detected! Synced to Waypoint %d / %d (Dist: %.1fs)", closestIdx, #loadedWaypoints, cDist))
-                        end
-                        lastCarryPosBeforeTick = myPos
+                    if lastCarryPosBeforeTick and (myPos - lastCarryPosBeforeTick).Magnitude >= 28.0 then
+                        local closestIdx, cDist = findClosestWaypointIndex(myPos, loadedWaypoints)
+                        currentWpIndex = closestIdx
+                        print(string.format("[Maki Waypoint 🛡️] Respawn detected! Synced to Waypoint %d / %d (Dist: %.1fs)", closestIdx, #loadedWaypoints, cDist))
+                    end
+                    lastCarryPosBeforeTick = myPos
 
-                        local targetPoint = loadedWaypoints[currentWpIndex]
-                        local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                        local dist = (myPos - targetPos).Magnitude
+                    local targetPoint = loadedWaypoints[currentWpIndex]
+                    local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                    local dist = (myPos - targetPos).Magnitude
 
-                        if dist <= 3.8 then
-                            currentWpIndex = currentWpIndex + 1
-                            if currentWpIndex <= #loadedWaypoints then
-                                targetPoint = loadedWaypoints[currentWpIndex]
-                                targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                            end
-                        end
-
+                    if dist <= 3.8 then
+                        currentWpIndex = currentWpIndex + 1
                         if currentWpIndex <= #loadedWaypoints then
-                            hum:MoveTo(targetPos)
+                            targetPoint = loadedWaypoints[currentWpIndex]
+                            targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
                         end
+                    end
+
+                    if currentWpIndex <= #loadedWaypoints then
+                        hum:MoveTo(targetPos)
                     end
                 else
                     lastCarryPosBeforeTick = nil
@@ -896,29 +859,25 @@ task.spawn(function()
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
             if hrp and hum and hum.Health > 0 then
-                if not isDungeonMatchActive() then
-                    hum:MoveTo(hrp.Position)
-                else
-                    local bossModel = nil
-                    local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon")
-                    if enemiesFolder then
-                        for _, c in ipairs(enemiesFolder:GetChildren()) do
-                            local bHum = c:FindFirstChildOfClass("Humanoid")
-                            if bHum and bHum.Health > 0 then
-                                bossModel = c
-                                break
-                            end
+                local bossModel = nil
+                local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon")
+                if enemiesFolder then
+                    for _, c in ipairs(enemiesFolder:GetChildren()) do
+                        local bHum = c:FindFirstChildOfClass("Humanoid")
+                        if bHum and bHum.Health > 0 then
+                            bossModel = c
+                            break
                         end
                     end
+                end
 
-                    if bossModel then
-                        local bRoot = bossModel.PrimaryPart or bossModel:FindFirstChild("HumanoidRootPart") or bossModel:FindFirstChild("Head")
-                        if bRoot then
-                            local dir = (bRoot.Position - hrp.Position).Unit
-                            local standPos = bRoot.Position - (dir * 35.0)
-                            hum:MoveTo(standPos)
-                            hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
-                        end
+                if bossModel then
+                    local bRoot = bossModel.PrimaryPart or bossModel:FindFirstChild("HumanoidRootPart") or bossModel:FindFirstChild("Head")
+                    if bRoot then
+                        local dir = (bRoot.Position - hrp.Position).Unit
+                        local standPos = bRoot.Position - (dir * 35.0)
+                        hum:MoveTo(standPos)
+                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
                     end
                 end
             end
@@ -1073,10 +1032,6 @@ task.spawn(function()
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
             if hrp and hum and hum.Health > 0 then
-                if not isDungeonMatchActive() then
-                    hum:MoveTo(hrp.Position)
-                    task.wait(0.05)
-                else
                 local myPos = hrp.Position
                 local now = os.clock()
 
@@ -1179,7 +1134,6 @@ task.spawn(function()
                             end
                         end
                     end
-                end
                 end
             else
                 lastMhcPosBeforeTick = nil
