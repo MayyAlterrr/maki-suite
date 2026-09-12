@@ -450,7 +450,28 @@ local function getCurrentRaidTier()
     if tVal and tVal:IsA("IntValue") and tVal.Value > 0 then
         return tVal.Value
     end
-    return Config.CurrentTier or 30
+
+    local dName = Workspace:FindFirstChild("dungeonName")
+    if dName and dName:IsA("StringValue") then
+        local tMatch = dName.Value:match("[Tt]ier%s*(%d+)")
+        if tMatch and tonumber(tMatch) then
+            return tonumber(tMatch)
+        end
+    end
+
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        for _, desc in ipairs(pG:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Visible and desc.Text then
+                local tMatch = desc.Text:match("[Tt]ier%s*(%d+)")
+                if tMatch and tonumber(tMatch) then
+                    return tonumber(tMatch)
+                end
+            end
+        end
+    end
+
+    return Config.CurrentTier or 1
 end
 
 local function isClientStuckInLoading()
@@ -1091,32 +1112,69 @@ local function handleNextTierAndReplay()
 
     task.spawn(function()
         local curTier = getCurrentRaidTier()
-        print(string.format("[Maki Replay] ⚡ Boss Defeated in Tier %d! Starting continuous Next Tier / Replay spam...", curTier))
+        print(string.format("[Maki Replay] ⚡ Boss Defeated in Tier %d! Checking Next Tier vs Replay...", curTier))
 
         executeUniversalAutoSell()
 
+        task.wait(1.5)
+
         local startTime = os.clock()
         while _G.MAKI_BOSS_RAID_RUNNING and isRaidOrDungeon() and (os.clock() - startTime < 12.0) do
-            -- 1. Upgrade Key / Next Tier if tier < 30
-            if Config.AutoNextTier and curTier < 30 then
-                if upgradeKeyRemote then
-                    pcall(function() upgradeKeyRemote:FireServer() end)
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local nextTierClicked = false
+
+            -- 1. If tier < 30 and AutoNextTier is enabled: Click Next Tier button ONLY (do not fire Replay)
+            if Config.AutoNextTier and curTier < 30 and pG then
+                for _, gui in ipairs(pG:GetChildren()) do
+                    if gui:IsA("ScreenGui") and gui.Enabled then
+                        for _, btn in ipairs(gui:GetDescendants()) do
+                            if btn:IsA("GuiButton") and btn.Visible then
+                                local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                                local bName = btn.Name:lower()
+                                if (bText:find("next") or bName:find("nexttier") or bName:find("next_tier") or bName:find("upgradetier")) and not bText:find("prev") then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                                    end)
+                                    if upgradeKeyRemote then
+                                        pcall(function() upgradeKeyRemote:FireServer() end)
+                                    end
+                                    nextTierClicked = true
+                                    print(string.format("[Maki Boss Raid 🌟] Advancing to Next Tier from Tier %d!", curTier))
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if nextTierClicked then break end
+                end
+            end
+
+            -- 2. If at Max Tier (>= 30) OR if Next Tier button is not present, loop REPLAY over and over!
+            if not nextTierClicked then
+                if replayRemote then
+                    pcall(function() replayRemote:FireServer() end)
+                    pcall(function() replayRemote:FireServer({ isHardcore = true, hardcore = true }) end)
+                end
+                if readyUpRemote then
+                    pcall(function() readyUpRemote:FireServer() end)
                 end
 
-                local pG = LocalPlayer:FindFirstChild("PlayerGui")
                 if pG then
                     for _, gui in ipairs(pG:GetChildren()) do
                         if gui:IsA("ScreenGui") and gui.Enabled then
                             for _, btn in ipairs(gui:GetDescendants()) do
-                                if btn:IsA("GuiButton") then
+                                if btn:IsA("GuiButton") and btn.Visible then
                                     local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
                                     local bName = btn.Name:lower()
-                                    if bText:find("next") or bText:find("upgrade") or bName:find("nexttier") or bName:find("upgradetier") or bName:find("upgrade") then
+                                    if bText:find("replay") or bText:find("retry") or bName:find("replay") or bName:find("retry") or bName:find("playagain") then
                                         pcall(function()
                                             for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
                                             for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
                                             for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
                                         end)
+                                        print(string.format("[Maki Boss Raid 🔄] Replaying Max Tier %d!", curTier))
                                     end
                                 end
                             end
@@ -1125,34 +1183,7 @@ local function handleNextTierAndReplay()
                 end
             end
 
-            -- 2. Fire Replay Remote & Click Replay Buttons
-            if replayRemote then
-                pcall(function() replayRemote:FireServer() end)
-                pcall(function() replayRemote:FireServer({ isHardcore = true, hardcore = true }) end)
-            end
-
-            local pG = LocalPlayer:FindFirstChild("PlayerGui")
-            if pG then
-                for _, gui in ipairs(pG:GetChildren()) do
-                    if gui:IsA("ScreenGui") and gui.Enabled then
-                        for _, btn in ipairs(gui:GetDescendants()) do
-                            if btn:IsA("GuiButton") then
-                                local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
-                                local bName = btn.Name:lower()
-                                if bText:find("replay") or bText:find("retry") or bName:find("replay") or bName:find("retry") or bName:find("playagain") then
-                                    pcall(function()
-                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-                                        for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-
-            task.wait(0.35)
+            task.wait(0.4)
         end
 
         -- Failsafe: if still in finished raid after 12s, return to Main Lobby so carry re-hosts immediately
