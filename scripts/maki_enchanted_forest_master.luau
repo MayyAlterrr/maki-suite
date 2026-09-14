@@ -22,7 +22,7 @@
 
 --      * Sub-Bosses & Bosses (Golem, Ancient Tree, The Dragon):
 
---          - Pre-Buff Charge (130s): Pop Q on the run
+--          - Pre-Buff Charge (140s): Pop Q on the run
 
 --          - Immediate E Strike (<= 82s): Halt, Face Boss, Fire E immediately
 
@@ -2910,9 +2910,9 @@ task.spawn(function()
 
 
 
-                    -- Pre-buff Q on the run at 130 studs so we sprint towards boss with +80% speed!
+                    -- Pre-buff Q on the run at 140 studs so we sprint towards boss with +80% speed!
 
-                    if bossDist <= 130 and isQReady() then
+                    if bossDist <= 140 and isQReady() then
 
                         castQ()
 
