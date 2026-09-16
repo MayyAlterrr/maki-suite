@@ -1,6 +1,6 @@
 -- ========================================================================
 --  PROJECT MAKI: MASTER PROGRESSION & CARRY/ALT SUITE (VERSION 4.0)
---  COMPLETE INTEGRATION: LEVELS 60-130 + 130-144 + 145-155+ + 160-165+ (AQUATIC)
+--  COMPLETE INTEGRATION: LEVELS 33-59 (WINTER OUTPOST) + 60-130 + 130-144 + 145-155+ + 160-165+ (AQUATIC)
 -- ========================================================================
 --  STATUS: 100% UNTRUNCATED FULL MONOLITHIC CODEBASE
 --  FIXED:
@@ -506,6 +506,11 @@ end)
 --  [MODULE 5] OFFICIAL PROGRESSION LADDER (LEVELS 60 - 165+)
 -- ========================================================================
 local ProgressionLadder = {
+    { dungeon = "Winter Outpost",   diff = "Easy",      req = 33,  slug = "winter_outpost",   engine = "waypoint" },
+    { dungeon = "Winter Outpost",   diff = "Medium",    req = 40,  slug = "winter_outpost",   engine = "waypoint" },
+    { dungeon = "Winter Outpost",   diff = "Hard",      req = 45,  slug = "winter_outpost",   engine = "waypoint" },
+    { dungeon = "Winter Outpost",   diff = "Insane",    req = 50,  slug = "winter_outpost",   engine = "waypoint" },
+    { dungeon = "Winter Outpost",   diff = "Nightmare", req = 55,  slug = "winter_outpost",   engine = "waypoint" },
     { dungeon = "Pirate Island",    diff = "Insane",    req = 60,  slug = "pirate_island",    engine = "waypoint" },
     { dungeon = "Pirate Island",    diff = "Nightmare", req = 65,  slug = "pirate_island",    engine = "waypoint" },
     { dungeon = "King's Castle",    diff = "Insane",    req = 70,  slug = "kings_castle",     engine = "waypoint" },
@@ -596,7 +601,7 @@ local function getLowestAltLevel()
         end
     end
     if minLvl == math.huge then
-        return 60, "Default (Lv 60)"
+        return 33, "Default (Lv 33)"
     end
     return minLvl, lowestName
 end
