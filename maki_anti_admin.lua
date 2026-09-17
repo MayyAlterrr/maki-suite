@@ -1,6 +1,6 @@
 -- ========================================================================
---  PROJECT MAKI: STANDALONE ANTI-ADMIN & INTRUDER EMERGENCY CRASH
---  VERSION: 2.0 (PERSISTENT UI EDITION)
+--  PROJECT MAKI: STANDALONE ANTI-ADMIN & INTRUDER EMERGENCY KICK
+--  VERSION: 2.1 (PERSISTENT UI + CLEAN KICK EDITION)
 -- ========================================================================
 --  FEATURES:
 --    • Sleek, draggable in-game GUI to view, add, and remove accounts.
@@ -8,7 +8,7 @@
 --      so it permanently remembers your accounts across runs & teleports.
 --    • Standalone: Zero connection to dqr_party_config.json.
 --    • Live Status: Shows DORMANT (in Lobby) vs ARMED (in Dungeon).
---    • Instant Hard Crash (<50ms) if an unwhitelisted player/admin enters.
+--    • Instant Safe Kick (<50ms) if an unwhitelisted player/admin enters.
 -- ========================================================================
 
 local Players           = game:GetService("Players")
@@ -149,29 +149,25 @@ local function isDungeon()
 end
 
 -- ========================================================================
---  [3] EMERGENCY CRASH ENGINE
+--  [3] EMERGENCY KICK ENGINE
 -- ========================================================================
-local isCrashing = false
+local isKicked = false
 
-local function forceCrash(reason)
-    if isCrashing then return end
-    isCrashing = true
+local function emergencyKick(reason)
+    if isKicked then return end
+    isKicked = true
 
-    print(string.format("[MAKI SECURITY] 🚨 %s - TRIGGERING IMMEDIATE CLIENT CRASH", tostring(reason)))
+    print(string.format("[MAKI SECURITY] 🚨 %s - DISCONNECTING CLIENT", tostring(reason)))
 
-    pcall(function() if typeof(shutdown) == "function" then shutdown() end end)
-    pcall(function() if typeof(closegame) == "function" then closegame() end end)
-    pcall(function() if typeof(os.exit) == "function" then os.exit() end end)
-    pcall(function() game:Shutdown() end)
+    local message = string.format(
+        "\n[MAKI SECURITY GUARD]\n\nSecurity Alert: Unauthorized user entered private dungeon.\n%s\n\nDisconnected to protect your account.",
+        tostring(reason)
+    )
 
-    task.spawn(function()
-        local memoryBomb = {}
-        while true do
-            table.insert(memoryBomb, string.rep("\255", 10485760))
-        end
+    -- Immediately disconnect player from server
+    pcall(function()
+        LocalPlayer:Kick(message)
     end)
-
-    while true do end
 end
 
 -- ========================================================================
@@ -182,7 +178,7 @@ local function evaluatePlayer(player)
     if not player or player == LocalPlayer then return end
 
     if not isWhitelisted(player) then
-        forceCrash(string.format("Unwhitelisted player entered dungeon: '%s' (UserId: %d)", player.Name, player.UserId))
+        emergencyKick(string.format("Unwhitelisted player entered dungeon: '%s' (UserId: %d)", player.Name, player.UserId))
     end
 end
 
