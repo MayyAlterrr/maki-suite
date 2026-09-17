@@ -38,13 +38,37 @@ local function addWhitelisted(name)
     end
 end
 
+local function getCustomAccounts()
+    local list = {}
+    -- 1. Check getgenv() or _G
+    local globalList = (typeof(getgenv) == "function" and getgenv().ALLOWED_ACCOUNTS) or _G.ALLOWED_ACCOUNTS
+    if type(globalList) == "table" then
+        for _, n in ipairs(globalList) do table.insert(list, n) end
+    end
+    -- 2. Check internal table
+    for _, n in ipairs(ALLOWED_ACCOUNTS) do table.insert(list, n) end
+    -- 3. Check optional workspace file (maki_accounts.txt)
+    if typeof(readfile) == "function" then
+        local ok, raw = pcall(readfile, "maki_accounts.txt")
+        if ok and raw and #raw > 0 then
+            for line in raw:gmatch("[^\r\n]+") do
+                local trimmed = line:match("^%s*(.-)%s*$")
+                if trimmed and #trimmed > 0 and not trimmed:match("^%-%-") then
+                    table.insert(list, trimmed)
+                end
+            end
+        end
+    end
+    return list
+end
+
 -- Always whitelist self
 if LocalPlayer and LocalPlayer.Name then
     addWhitelisted(LocalPlayer.Name)
 end
 
--- Whitelist all accounts configured above
-for _, name in ipairs(ALLOWED_ACCOUNTS) do
+-- Whitelist all configured accounts
+for _, name in ipairs(getCustomAccounts()) do
     addWhitelisted(name)
 end
 
