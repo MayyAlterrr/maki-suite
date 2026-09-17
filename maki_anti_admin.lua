@@ -2,43 +2,30 @@
 --  PROJECT MAKI: STANDALONE ANTI-ADMIN & INTRUDER EMERGENCY CRASH
 -- ========================================================================
 --  FUNCTION:
+--    • Fully standalone (Zero connection to dqr_party_config.json).
 --    • Only activates inside private Dungeons (Dormant in Main Lobby).
---    • Checks if any player joining (or present) is NOT in your party whitelist.
+--    • Checks if any player joining (or present) is NOT in your allowed accounts list.
 --    • If an unwhitelisted player / admin enters the dungeon instance,
---      it immediately forces a hard Roblox client crash / disconnect.
+--      it immediately forces an instant hard Roblox client crash / disconnect.
 -- ========================================================================
 
 -- ========================================================================
---  [1] USER CONFIGURATION
+--  [1] USER CONFIGURATION (ALLOWED ACCOUNTS)
 -- ========================================================================
--- Add your Carry and Alt account usernames here (case-insensitive).
--- You can also leave this table empty if you have "dqr_party_config.json"
--- properly populated in your workspace.
-local MANUAL_WHITELIST = {
-    -- "YourCarryUsername",
-    -- "YourAlt1",
-    -- "YourAlt2",
+-- List all of your account usernames here (case-insensitive).
+-- All accounts are treated as equals.
+local ALLOWED_ACCOUNTS = {
+    -- "AccountOne",
+    -- "AccountTwo",
+    -- "AccountThree",
 }
-
--- If true, automatically loads CarryUsername & AltUsernames from dqr_party_config.json
-local AUTO_LOAD_PARTY_CONFIG = true
-local PARTY_CONFIG_FILE      = "dqr_party_config.json"
 
 -- ========================================================================
 --  [2] SERVICES & UTILITIES
 -- ========================================================================
 local Players     = game:GetService("Players")
 local Workspace   = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
-
-local function safeReadFile(fileName)
-    if typeof(readfile) == "function" then
-        local ok, res = pcall(readfile, fileName)
-        if ok and res and #res > 0 then return res end
-    end
-    return nil
-end
 
 -- ========================================================================
 --  [3] WHITELIST REGISTRY
@@ -56,27 +43,9 @@ if LocalPlayer and LocalPlayer.Name then
     addWhitelisted(LocalPlayer.Name)
 end
 
--- Add manual entries
-for _, name in ipairs(MANUAL_WHITELIST) do
+-- Whitelist all accounts configured above
+for _, name in ipairs(ALLOWED_ACCOUNTS) do
     addWhitelisted(name)
-end
-
--- Load from dqr_party_config.json
-if AUTO_LOAD_PARTY_CONFIG then
-    local raw = safeReadFile(PARTY_CONFIG_FILE)
-    if raw then
-        local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
-        if ok and type(data) == "table" then
-            if data.CarryUsername and #data.CarryUsername > 0 then
-                addWhitelisted(data.CarryUsername)
-            end
-            if type(data.AltUsernames) == "table" then
-                for _, alt in ipairs(data.AltUsernames) do
-                    addWhitelisted(alt)
-                end
-            end
-        end
-    end
 end
 
 local function isWhitelisted(player)
@@ -192,6 +161,6 @@ task.spawn(function()
     end
 end)
 
-print(string.format("[MAKI SECURITY] Loaded Anti-Admin Watchdog. State: %s (Whitelisted: %d)", 
+print(string.format("[MAKI SECURITY] Loaded Standalone Anti-Admin Watchdog. State: %s (Whitelisted: %d)", 
     isDungeon() and "ACTIVE (Dungeon)" or "DORMANT (Lobby)", 
     getWhitelistCount()))
