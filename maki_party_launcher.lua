@@ -70,7 +70,11 @@ local DUNGEONS = {
     "Orbital Outpost",
     "Volcanic Chambers",
     "Aquatic Temple",
-    "Enchanted Forest"
+    "Enchanted Forest",
+    "Northern Lands",
+    "Gilded Skies",
+    "Yokai Peak",
+    "Abyssal Void"
 }
 
 local DIFFICULTIES = {
@@ -95,6 +99,10 @@ local DungeonReqs = {
     ["Volcanic Chambers"] = { Easy = 150, Medium = 150, Hard = 150, Insane = 150, Nightmare = 155 },
     ["Aquatic Temple"]    = { Easy = 165, Medium = 165, Hard = 165, Insane = 165, Nightmare = 165 },
     ["Enchanted Forest"]  = { Easy = 175, Medium = 175, Hard = 175, Insane = 175, Nightmare = 175 },
+    ["Northern Lands"]    = { Easy = 180, Medium = 180, Hard = 180, Insane = 180, Nightmare = 185 },
+    ["Gilded Skies"]      = { Easy = 190, Medium = 190, Hard = 190, Insane = 190, Nightmare = 195 },
+    ["Yokai Peak"]        = { Easy = 200, Medium = 200, Hard = 200, Insane = 200, Nightmare = 205 },
+    ["Abyssal Void"]      = { Easy = 210, Medium = 210, Hard = 210, Insane = 210, Nightmare = 215 },
 }
 
 local function getLevelRequirement(dungeon, diff)
