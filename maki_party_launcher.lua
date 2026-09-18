@@ -1,16 +1,18 @@
 -- ========================================================================
 --  PROJECT MAKI: STANDALONE PARTY LAUNCHER & COORDINATOR
---  VERSION: 1.0 (MULTI-DUNGEON PERSISTENT UI)
+--  VERSION: 2.0 (FULL ZERO-CLICK AUTONOMOUS EDITION)
 -- ========================================================================
 --  FEATURES:
---    • Works in Main Lobby to coordinate all your accounts into one party.
---    • Choose ANY dungeon and ANY difficulty directly from the GUI.
---    • Hardcore Mode toggle supported.
---    • Automatically whitelists selected accounts.
---    • Host creates private lobby & auto-accepts whitelisted members.
---    • Members automatically send join requests & ready up.
---    • Auto-starts the dungeon as soon as all accounts are assembled in party.
---    • Automatically saves configuration to "maki_party_launcher_config.json".
+--    • 100% Zero-Click Full Automation:
+--        - Automatically creates private party lobby on Host.
+--        - Automatically whitelists selected accounts.
+--        - Automatically sends join requests & readies up on Members.
+--        - Automatically launches dungeon match as soon as party is assembled.
+--    • Fixed Layout: Difficulty row and Hardcore toggle have dedicated spaces
+--      with zero visual overlap.
+--    • Instant Persistent Storage: Automatically remembers your chosen
+--      Dungeon, Difficulty, Hardcore setting, Host, and Party Accounts.
+--    • Live Visual Feedback: Shows which accounts have joined the party in real-time.
 -- ========================================================================
 
 local Players           = game:GetService("Players")
@@ -118,10 +120,10 @@ end
 local Config = {
     HostUsername        = "",
     WhitelistedAccounts = {},
-    SelectedDungeon     = "Winter Outpost",
-    SelectedDifficulty  = "Easy",
-    HardcoreMode        = true,
-    AutoStartOnFull     = true
+    SelectedDungeon     = "Northern Lands",
+    SelectedDifficulty  = "Nightmare",
+    HardcoreMode        = false,
+    AutoLaunchEnabled   = true
 }
 
 local function safeReadFile(fileName)
@@ -160,9 +162,42 @@ local function loadConfig()
     if not Config.HostUsername or #Config.HostUsername == 0 then
         Config.HostUsername = LocalPlayer.Name
     end
+    if Config.AutoLaunchEnabled == nil then
+        Config.AutoLaunchEnabled = true
+    end
 end
 
 loadConfig()
+
+-- Sync dungeon & difficulty indices
+local currentDungeonIdx = 1
+local function syncDungeonIndex()
+    for i, d in ipairs(DUNGEONS) do
+        if d:lower() == tostring(Config.SelectedDungeon):lower() then
+            currentDungeonIdx = i
+            Config.SelectedDungeon = d
+            return
+        end
+    end
+    currentDungeonIdx = 1
+    Config.SelectedDungeon = DUNGEONS[1]
+end
+
+local currentDiffIdx = 1
+local function syncDiffIndex()
+    for i, d in ipairs(DIFFICULTIES) do
+        if d:lower() == tostring(Config.SelectedDifficulty):lower() then
+            currentDiffIdx = i
+            Config.SelectedDifficulty = d
+            return
+        end
+    end
+    currentDiffIdx = 1
+    Config.SelectedDifficulty = DIFFICULTIES[1]
+end
+
+syncDungeonIndex()
+syncDiffIndex()
 
 -- Helpers for Whitelist
 local function isAccountWhitelisted(name)
@@ -223,6 +258,7 @@ end
 local isLobbyActive = false
 local joinedMembers = {}
 local isStartingMatch = false
+local autoHostCooldown = 0
 
 local function destroyJoinPopups()
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
@@ -241,6 +277,26 @@ local function destroyJoinPopups()
     end
 end
 
+local function isMemberInPartyGui(accName)
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pG then return false end
+    local lower = string.lower(accName)
+    local qG = pG:FindFirstChild("queueGui")
+    if qG then
+        for _, d in ipairs(qG:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text and d.Text:lower():find(lower) then
+                return true
+            end
+        end
+    end
+    local statusFrame = pG:FindFirstChild("playerStatus")
+    local tHolder = statusFrame and statusFrame:FindFirstChild("teammateHolder", true)
+    if tHolder and tHolder:FindFirstChild(accName) then
+        return true
+    end
+    return false
+end
+
 -- Auto-accept join requests on Host
 if showJoinRemote and respondJoinRequestRemote then
     showJoinRemote.OnClientEvent:Connect(function(requesterName, ...)
@@ -251,7 +307,7 @@ if showJoinRemote and respondJoinRequestRemote then
                     respondJoinRequestRemote:FireServer(nameStr, true)
                 end)
                 joinedMembers[string.lower(nameStr)] = true
-                print(string.format("[Maki Party] ✅ Approved party join: %s", nameStr))
+                print(string.format("[Maki Party] ✅ Instantly approved party join: %s", nameStr))
                 destroyJoinPopups()
             end
         end
@@ -261,7 +317,7 @@ end
 local function startDungeonMatch()
     if isStartingMatch then return end
     isStartingMatch = true
-    print("[Maki Party] 🚀 Launching Dungeon with Party!")
+    print("[Maki Party] 🚀 Starting Dungeon Match with party!")
 
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
@@ -303,7 +359,7 @@ local function hostCreatePartyLobby()
     local dDiff = Config.SelectedDifficulty
     local dReq  = getLevelRequirement(dName, dDiff)
 
-    print(string.format("[Maki Party] 🏰 Creating Lobby: %s (%s) [Req: %d, Hardcore: %s]...", 
+    print(string.format("[Maki Party] 🏰 Auto-Creating Lobby: %s (%s) [Req: %d, Hardcore: %s]...", 
         dName, dDiff, dReq, tostring(Config.HardcoreMode)))
 
     local ok, res = pcall(function()
@@ -311,7 +367,7 @@ local function hostCreatePartyLobby()
     end)
 
     if ok and res == true then
-        print("[Maki Party] ✅ Lobby Created! Whitelisting members...")
+        print("[Maki Party] ✅ Lobby Created! Whitelisting party accounts...")
         if addPlayerToWhitelistRemote then
             for _, acc in ipairs(Config.WhitelistedAccounts) do
                 pcall(function() addPlayerToWhitelistRemote:FireServer(acc) end)
@@ -324,39 +380,53 @@ local function hostCreatePartyLobby()
     end
 end
 
--- Periodic Party Coordination Loop
+-- ========================================================================
+--  [6] PERIODIC AUTOMATION ENGINE
+-- ========================================================================
 task.spawn(function()
+    task.wait(1.5) -- Initial startup grace period
+    
     while _G.MAKI_PARTY_LAUNCHER_RUNNING do
-        task.wait(0.5)
+        task.wait(0.4)
 
         if isMainLobby() then
             if isCurrentHost() then
-                -- Host logic: clean popups & check if all members joined
                 destroyJoinPopups()
 
-                if isLobbyActive and not isStartingMatch and Config.AutoStartOnFull then
-                    local allJoined = true
-                    local targetCount = #Config.WhitelistedAccounts
+                -- Automatically create lobby if enabled and not already hosted
+                if Config.AutoLaunchEnabled and not isLobbyActive and not isStartingMatch then
+                    if os.clock() > autoHostCooldown then
+                        autoHostCooldown = os.clock() + 3.0
+                        hostCreatePartyLobby()
+                    end
+                end
 
-                    if targetCount > 0 then
-                        for _, acc in ipairs(Config.WhitelistedAccounts) do
-                            if string.lower(acc) ~= string.lower(LocalPlayer.Name) then
-                                if not joinedMembers[string.lower(acc)] then
-                                    allJoined = false
-                                    break
-                                end
+                -- Check if all members have assembled
+                if isLobbyActive and not isStartingMatch and Config.AutoLaunchEnabled then
+                    local allJoined = true
+                    local requiredCount = 0
+
+                    for _, acc in ipairs(Config.WhitelistedAccounts) do
+                        if string.lower(acc) ~= string.lower(LocalPlayer.Name) then
+                            requiredCount = requiredCount + 1
+                            local isPresent = joinedMembers[string.lower(acc)] or isMemberInPartyGui(acc)
+                            if not isPresent then
+                                allJoined = false
                             end
                         end
-                        if allJoined then
-                            print("[Maki Party] 🎯 All whitelisted members have joined! Auto-starting match...")
-                            startDungeonMatch()
-                        end
+                    end
+
+                    -- If party is assembled (or solo host), start dungeon automatically!
+                    if allJoined then
+                        print("[Maki Party] 🎯 All whitelisted members have assembled! Auto-starting match...")
+                        task.wait(0.8)
+                        startDungeonMatch()
                     end
                 end
             else
-                -- Member logic: repeatedly send join request to Host
+                -- Member Mode: continuously send join request to Host
                 local host = Config.HostUsername
-                if host and #host > 0 then
+                if host and #host > 0 and Config.AutoLaunchEnabled then
                     pcall(function()
                         if sendJoinRequestRemote then
                             sendJoinRequestRemote:InvokeServer(host)
@@ -366,7 +436,8 @@ task.spawn(function()
                         end
                     end)
                 end
-                -- Ready up if queueGui is present
+
+                -- Auto ready up if in party / queueGui
                 local pG = LocalPlayer:FindFirstChild("PlayerGui")
                 local qG = pG and pG:FindFirstChild("queueGui")
                 if qG and readyUpRemote then
@@ -378,7 +449,7 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  [6] MODERN GRAPHICAL USER INTERFACE
+--  [7] MODERN GRAPHICAL USER INTERFACE
 -- ========================================================================
 local parent = getGuiParent()
 local existingGui = parent:FindFirstChild("MakiPartyLauncherGui")
@@ -392,8 +463,8 @@ ScreenGui.Parent = parent
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 340, 0, 480)
-MainFrame.Position = UDim2.new(0, 40, 0, 140)
+MainFrame.Size = UDim2.new(0, 340, 0, 520)
+MainFrame.Position = UDim2.new(0, 40, 0, 120)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -500,7 +571,7 @@ Content.BackgroundTransparency = 1
 Content.BorderSizePixel = 0
 Content.ScrollBarThickness = 4
 Content.ScrollBarImageColor3 = Color3.fromRGB(60, 70, 95)
-Content.CanvasSize = UDim2.new(0, 0, 0, 520)
+Content.CanvasSize = UDim2.new(0, 0, 0, 560)
 Content.Parent = MainFrame
 
 local ContentLayout = Instance.new("UIListLayout")
@@ -510,7 +581,7 @@ ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
 ContentLayout.Parent = Content
 
 local ContentPadding = Instance.new("UIPadding")
-ContentPadding.PaddingTop = UDim.new(0, 10)
+ContentPadding.PaddingTop = UDim.new(0, 8)
 ContentPadding.PaddingBottom = UDim.new(0, 10)
 ContentPadding.PaddingLeft = UDim.new(0, 12)
 ContentPadding.PaddingRight = UDim.new(0, 12)
@@ -518,7 +589,7 @@ ContentPadding.Parent = Content
 
 -- [1] Host & Role Section
 local HostCard = Instance.new("Frame")
-HostCard.Size = UDim2.new(1, 0, 0, 66)
+HostCard.Size = UDim2.new(1, 0, 0, 64)
 HostCard.BackgroundColor3 = Color3.fromRGB(25, 29, 39)
 HostCard.BorderSizePixel = 0
 HostCard.Parent = Content
@@ -528,7 +599,7 @@ HostCorner.CornerRadius = UDim.new(0, 8)
 HostCorner.Parent = HostCard
 
 local HostLabel = Instance.new("TextLabel")
-HostLabel.Size = UDim2.new(1, -16, 0, 18)
+HostLabel.Size = UDim2.new(1, -16, 0, 16)
 HostLabel.Position = UDim2.new(0, 10, 0, 6)
 HostLabel.BackgroundTransparency = 1
 HostLabel.Text = "HOST USERNAME:"
@@ -539,8 +610,8 @@ HostLabel.TextXAlignment = Enum.TextXAlignment.Left
 HostLabel.Parent = HostCard
 
 local HostBox = Instance.new("TextBox")
-HostBox.Size = UDim2.new(1, -110, 0, 30)
-HostBox.Position = UDim2.new(0, 10, 0, 28)
+HostBox.Size = UDim2.new(1, -110, 0, 28)
+HostBox.Position = UDim2.new(0, 10, 0, 26)
 HostBox.BackgroundColor3 = Color3.fromRGB(32, 37, 50)
 HostBox.BorderSizePixel = 0
 HostBox.Text = Config.HostUsername
@@ -555,8 +626,8 @@ HostBoxCorner.CornerRadius = UDim.new(0, 6)
 HostBoxCorner.Parent = HostBox
 
 local SetHostBtn = Instance.new("TextButton")
-SetHostBtn.Size = UDim2.new(0, 88, 0, 30)
-SetHostBtn.Position = UDim2.new(1, -98, 0, 28)
+SetHostBtn.Size = UDim2.new(0, 88, 0, 28)
+SetHostBtn.Position = UDim2.new(1, -98, 0, 26)
 SetHostBtn.BackgroundColor3 = Color3.fromRGB(45, 95, 170)
 SetHostBtn.BorderSizePixel = 0
 SetHostBtn.Text = "👑 Set Me"
@@ -569,9 +640,9 @@ local SetHostCorner = Instance.new("UICorner")
 SetHostCorner.CornerRadius = UDim.new(0, 6)
 SetHostCorner.Parent = SetHostBtn
 
--- [2] Dungeon & Difficulty Selectors
+-- [2] Dungeon & Difficulty Selectors (Dedicated Rows, Zero Overlap)
 local SelectCard = Instance.new("Frame")
-SelectCard.Size = UDim2.new(1, 0, 0, 120)
+SelectCard.Size = UDim2.new(1, 0, 0, 154)
 SelectCard.BackgroundColor3 = Color3.fromRGB(25, 29, 39)
 SelectCard.BorderSizePixel = 0
 SelectCard.Parent = Content
@@ -580,7 +651,7 @@ local SelectCorner = Instance.new("UICorner")
 SelectCorner.CornerRadius = UDim.new(0, 8)
 SelectCorner.Parent = SelectCard
 
--- Dungeon Row
+-- Row 1: Dungeon
 local DungeonLabel = Instance.new("TextLabel")
 DungeonLabel.Size = UDim2.new(1, -20, 0, 16)
 DungeonLabel.Position = UDim2.new(0, 10, 0, 6)
@@ -635,10 +706,10 @@ local DNextCorner = Instance.new("UICorner")
 DNextCorner.CornerRadius = UDim.new(0, 6)
 DNextCorner.Parent = DungeonNextBtn
 
--- Difficulty Row
+-- Row 2: Difficulty (Full Width, Matching Dungeon Row)
 local DiffLabel = Instance.new("TextLabel")
-DiffLabel.Size = UDim2.new(0.6, 0, 0, 16)
-DiffLabel.Position = UDim2.new(0, 10, 0, 58)
+DiffLabel.Size = UDim2.new(1, -20, 0, 16)
+DiffLabel.Position = UDim2.new(0, 10, 0, 56)
 DiffLabel.BackgroundTransparency = 1
 DiffLabel.Text = "DIFFICULTY:"
 DiffLabel.TextColor3 = Color3.fromRGB(150, 160, 180)
@@ -649,7 +720,7 @@ DiffLabel.Parent = SelectCard
 
 local DiffPrevBtn = Instance.new("TextButton")
 DiffPrevBtn.Size = UDim2.new(0, 28, 0, 28)
-DiffPrevBtn.Position = UDim2.new(0, 10, 0, 76)
+DiffPrevBtn.Position = UDim2.new(0, 10, 0, 74)
 DiffPrevBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 56)
 DiffPrevBtn.Text = "◀"
 DiffPrevBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
@@ -662,8 +733,8 @@ DiffPrevCorner.CornerRadius = UDim.new(0, 6)
 DiffPrevCorner.Parent = DiffPrevBtn
 
 local DiffNameLabel = Instance.new("TextLabel")
-DiffNameLabel.Size = UDim2.new(0.5, -34, 0, 28)
-DiffNameLabel.Position = UDim2.new(0, 42, 0, 76)
+DiffNameLabel.Size = UDim2.new(1, -84, 0, 28)
+DiffNameLabel.Position = UDim2.new(0, 42, 0, 74)
 DiffNameLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
 DiffNameLabel.BorderSizePixel = 0
 DiffNameLabel.Text = Config.SelectedDifficulty
@@ -678,7 +749,7 @@ DiffNameCorner.Parent = DiffNameLabel
 
 local DiffNextBtn = Instance.new("TextButton")
 DiffNextBtn.Size = UDim2.new(0, 28, 0, 28)
-DiffNextBtn.Position = UDim2.new(0.5, 12, 0, 76)
+DiffNextBtn.Position = UDim2.new(1, -38, 0, 74)
 DiffNextBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 56)
 DiffNextBtn.Text = "▶"
 DiffNextBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
@@ -690,15 +761,15 @@ local DiffNextCorner = Instance.new("UICorner")
 DiffNextCorner.CornerRadius = UDim.new(0, 6)
 DiffNextCorner.Parent = DiffNextBtn
 
--- Hardcore Toggle
+-- Row 3: Dedicated Hardcore Toggle (No Overlap)
 local HardcoreBtn = Instance.new("TextButton")
-HardcoreBtn.Size = UDim2.new(0.42, 0, 0, 28)
-HardcoreBtn.Position = UDim2.new(0.58, -6, 0, 76)
+HardcoreBtn.Size = UDim2.new(1, -20, 0, 30)
+HardcoreBtn.Position = UDim2.new(0, 10, 0, 112)
 HardcoreBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(150, 40, 45) or Color3.fromRGB(40, 45, 60)
 HardcoreBtn.BorderSizePixel = 0
-HardcoreBtn.Text = Config.HardcoreMode and "🔥 Hardcore: ON" or "🛡️ Hardcore: OFF"
+HardcoreBtn.Text = Config.HardcoreMode and "🔥 Hardcore Mode: ON" or "🛡️ Hardcore Mode: OFF"
 HardcoreBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-HardcoreBtn.TextSize = 11
+HardcoreBtn.TextSize = 12
 HardcoreBtn.Font = Enum.Font.GothamBold
 HardcoreBtn.Parent = SelectCard
 
@@ -789,7 +860,7 @@ AccListPadding.Parent = AccScroll
 
 -- [4] Action & Launch Controls
 local ActionCard = Instance.new("Frame")
-ActionCard.Size = UDim2.new(1, 0, 0, 84)
+ActionCard.Size = UDim2.new(1, 0, 0, 90)
 ActionCard.BackgroundColor3 = Color3.fromRGB(25, 29, 39)
 ActionCard.BorderSizePixel = 0
 ActionCard.Parent = Content
@@ -801,11 +872,11 @@ ActionCorner.Parent = ActionCard
 local LaunchBtn = Instance.new("TextButton")
 LaunchBtn.Size = UDim2.new(1, -20, 0, 36)
 LaunchBtn.Position = UDim2.new(0, 10, 0, 8)
-LaunchBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 80)
+LaunchBtn.BackgroundColor3 = Config.AutoLaunchEnabled and Color3.fromRGB(40, 140, 80) or Color3.fromRGB(70, 75, 90)
 LaunchBtn.BorderSizePixel = 0
-LaunchBtn.Text = "🏰 CREATE & FORM PARTY"
+LaunchBtn.Text = Config.AutoLaunchEnabled and "⚡ AUTO-LAUNCH: ACTIVE" or "⏸️ AUTO-LAUNCH: PAUSED"
 LaunchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-LaunchBtn.TextSize = 13
+LaunchBtn.TextSize = 12
 LaunchBtn.Font = Enum.Font.GothamBold
 LaunchBtn.Parent = ActionCard
 
@@ -814,17 +885,18 @@ LaunchCorner.CornerRadius = UDim.new(0, 8)
 LaunchCorner.Parent = LaunchBtn
 
 local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -20, 0, 28)
+StatusLabel.Size = UDim2.new(1, -20, 0, 34)
 StatusLabel.Position = UDim2.new(0, 10, 0, 48)
 StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Status: Ready in Lobby"
+StatusLabel.Text = "Status: Initializing..."
 StatusLabel.TextColor3 = Color3.fromRGB(200, 210, 230)
 StatusLabel.TextSize = 11
 StatusLabel.Font = Enum.Font.GothamMedium
+StatusLabel.TextWrapped = true
 StatusLabel.Parent = ActionCard
 
 -- ========================================================================
---  [7] UI CONTROLLER & EVENT CONNECTIONS
+--  [8] UI CONTROLLER & EVENT CONNECTIONS
 -- ========================================================================
 local function refreshWhitelistUI()
     for _, child in ipairs(AccScroll:GetChildren()) do
@@ -845,12 +917,15 @@ local function refreshWhitelistUI()
         RowCorner.CornerRadius = UDim.new(0, 5)
         RowCorner.Parent = Row
 
+        local isJoined = joinedMembers[string.lower(name)] or isMemberInPartyGui(name)
+        local statusIcon = isJoined and "✅" or "🔄"
+
         local NameLbl = Instance.new("TextLabel")
         NameLbl.Size = UDim2.new(1, -30, 1, 0)
         NameLbl.Position = UDim2.new(0, 8, 0, 0)
         NameLbl.BackgroundTransparency = 1
-        NameLbl.Text = string.format("%d. %s", idx, name)
-        NameLbl.TextColor3 = Color3.fromRGB(225, 230, 240)
+        NameLbl.Text = string.format("%d. %s %s", idx, name, statusIcon)
+        NameLbl.TextColor3 = isJoined and Color3.fromRGB(150, 255, 170) or Color3.fromRGB(225, 230, 240)
         NameLbl.TextSize = 11
         NameLbl.Font = Enum.Font.GothamMedium
         NameLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -890,6 +965,7 @@ SetHostBtn.MouseButton1Click:Connect(function()
     Config.HostUsername = LocalPlayer.Name
     HostBox.Text = LocalPlayer.Name
     saveConfig()
+    isLobbyActive = false
     print("[Maki Party] 👑 Host set to LocalPlayer: " .. LocalPlayer.Name)
 end)
 
@@ -898,6 +974,7 @@ HostBox.FocusLost:Connect(function()
     if text and #text > 0 then
         Config.HostUsername = text
         saveConfig()
+        isLobbyActive = false
     end
 end)
 
@@ -915,18 +992,15 @@ AccInputBox.FocusLost:Connect(function(enter)
     if enter then handleAddAcc() end
 end)
 
--- Dungeon Cycle Handlers
-local currentDungeonIdx = 1
-for i, d in ipairs(DUNGEONS) do
-    if d == Config.SelectedDungeon then currentDungeonIdx = i break end
-end
-
+-- Dungeon Cycle Handlers (With Instant Persistence)
 DungeonPrevBtn.MouseButton1Click:Connect(function()
     currentDungeonIdx = currentDungeonIdx - 1
     if currentDungeonIdx < 1 then currentDungeonIdx = #DUNGEONS end
     Config.SelectedDungeon = DUNGEONS[currentDungeonIdx]
     DungeonNameLabel.Text = Config.SelectedDungeon
     saveConfig()
+    isLobbyActive = false
+    print("[Maki Party] 💾 Saved Dungeon: " .. Config.SelectedDungeon)
 end)
 
 DungeonNextBtn.MouseButton1Click:Connect(function()
@@ -935,20 +1009,19 @@ DungeonNextBtn.MouseButton1Click:Connect(function()
     Config.SelectedDungeon = DUNGEONS[currentDungeonIdx]
     DungeonNameLabel.Text = Config.SelectedDungeon
     saveConfig()
+    isLobbyActive = false
+    print("[Maki Party] 💾 Saved Dungeon: " .. Config.SelectedDungeon)
 end)
 
--- Difficulty Cycle Handlers
-local currentDiffIdx = 1
-for i, d in ipairs(DIFFICULTIES) do
-    if d == Config.SelectedDifficulty then currentDiffIdx = i break end
-end
-
+-- Difficulty Cycle Handlers (With Instant Persistence)
 DiffPrevBtn.MouseButton1Click:Connect(function()
     currentDiffIdx = currentDiffIdx - 1
     if currentDiffIdx < 1 then currentDiffIdx = #DIFFICULTIES end
     Config.SelectedDifficulty = DIFFICULTIES[currentDiffIdx]
     DiffNameLabel.Text = Config.SelectedDifficulty
     saveConfig()
+    isLobbyActive = false
+    print("[Maki Party] 💾 Saved Difficulty: " .. Config.SelectedDifficulty)
 end)
 
 DiffNextBtn.MouseButton1Click:Connect(function()
@@ -957,41 +1030,29 @@ DiffNextBtn.MouseButton1Click:Connect(function()
     Config.SelectedDifficulty = DIFFICULTIES[currentDiffIdx]
     DiffNameLabel.Text = Config.SelectedDifficulty
     saveConfig()
+    isLobbyActive = false
+    print("[Maki Party] 💾 Saved Difficulty: " .. Config.SelectedDifficulty)
 end)
 
 -- Hardcore Toggle Handler
 HardcoreBtn.MouseButton1Click:Connect(function()
     Config.HardcoreMode = not Config.HardcoreMode
     HardcoreBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(150, 40, 45) or Color3.fromRGB(40, 45, 60)
-    HardcoreBtn.Text = Config.HardcoreMode and "🔥 Hardcore: ON" or "🛡️ Hardcore: OFF"
+    HardcoreBtn.Text = Config.HardcoreMode and "🔥 Hardcore Mode: ON" or "🛡️ Hardcore Mode: OFF"
+    saveConfig()
+    isLobbyActive = false
+    print("[Maki Party] 💾 Saved Hardcore: " .. tostring(Config.HardcoreMode))
+end)
+
+-- Auto-Launch Toggle Button
+LaunchBtn.MouseButton1Click:Connect(function()
+    Config.AutoLaunchEnabled = not Config.AutoLaunchEnabled
+    LaunchBtn.BackgroundColor3 = Config.AutoLaunchEnabled and Color3.fromRGB(40, 140, 80) or Color3.fromRGB(70, 75, 90)
+    LaunchBtn.Text = Config.AutoLaunchEnabled and "⚡ AUTO-LAUNCH: ACTIVE" or "⏸️ AUTO-LAUNCH: PAUSED"
     saveConfig()
 end)
 
--- Launch Button Click Handler
-LaunchBtn.MouseButton1Click:Connect(function()
-    if not isMainLobby() then
-        StatusLabel.Text = "⚠️ You are already in a Dungeon!"
-        StatusLabel.TextColor3 = Color3.fromRGB(255, 180, 80)
-        return
-    end
-
-    if isCurrentHost() then
-        if not isLobbyActive then
-            hostCreatePartyLobby()
-            LaunchBtn.Text = "▶️ START DUNGEON NOW"
-            LaunchBtn.BackgroundColor3 = Color3.fromRGB(180, 110, 30)
-            StatusLabel.Text = "Lobby Created! Waiting for members..."
-        else
-            startDungeonMatch()
-            LaunchBtn.Text = "🚀 LAUNCHING..."
-            LaunchBtn.BackgroundColor3 = Color3.fromRGB(160, 50, 60)
-        end
-    else
-        StatusLabel.Text = "Member Mode: Auto-joining " .. tostring(Config.HostUsername)
-    end
-end)
-
--- Minimize & Hide
+-- Minimize & Hide Controls
 local isMin = false
 MinBtn.MouseButton1Click:Connect(function()
     isMin = not isMin
@@ -1000,7 +1061,7 @@ MinBtn.MouseButton1Click:Connect(function()
         Content.Visible = false
         MinBtn.Text = "+"
     else
-        MainFrame.Size = UDim2.new(0, 340, 0, 480)
+        MainFrame.Size = UDim2.new(0, 340, 0, 520)
         Content.Visible = true
         MinBtn.Text = "—"
     end
@@ -1008,7 +1069,7 @@ end)
 
 local FloatingBadge = Instance.new("TextButton")
 FloatingBadge.Size = UDim2.new(0, 36, 0, 36)
-FloatingBadge.Position = UDim2.new(0, 40, 0, 90)
+FloatingBadge.Position = UDim2.new(0, 40, 0, 75)
 FloatingBadge.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
 FloatingBadge.Text = "🎮"
 FloatingBadge.TextSize = 18
@@ -1033,32 +1094,48 @@ end)
 task.spawn(function()
     while _G.MAKI_PARTY_LAUNCHER_RUNNING and ScreenGui and ScreenGui.Parent do
         if not isMainLobby() then
-            StatusLabel.Text = "Status: 🟢 Inside Dungeon"
+            StatusLabel.Text = "Status: 🟢 Inside Dungeon (Party Complete)"
             StatusLabel.TextColor3 = Color3.fromRGB(140, 240, 160)
         else
-            if isCurrentHost() then
+            refreshWhitelistUI()
+
+            if not Config.AutoLaunchEnabled then
+                StatusLabel.Text = "Status: ⏸️ Automation Paused (Click button to resume)"
+                StatusLabel.TextColor3 = Color3.fromRGB(240, 200, 100)
+            elseif isCurrentHost() then
                 if isStartingMatch then
                     StatusLabel.Text = "Status: 🚀 Teleporting Party to Dungeon..."
                     StatusLabel.TextColor3 = Color3.fromRGB(255, 215, 80)
                 elseif isLobbyActive then
                     local count = 0
-                    for _ in pairs(joinedMembers) do count = count + 1 end
-                    StatusLabel.Text = string.format("Status: 🏰 Lobby Open (%d/%d Members Joined)", count, #Config.WhitelistedAccounts)
+                    for _, acc in ipairs(Config.WhitelistedAccounts) do
+                        if string.lower(acc) ~= string.lower(LocalPlayer.Name) then
+                            if joinedMembers[string.lower(acc)] or isMemberInPartyGui(acc) then
+                                count = count + 1
+                            end
+                        end
+                    end
+                    local totalNeeded = math.max(0, #Config.WhitelistedAccounts - 1)
+                    StatusLabel.Text = string.format("Status: 🏰 Lobby Active (%d/%d Accounts Assembled)", count, totalNeeded)
                     StatusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
                 else
-                    StatusLabel.Text = "Status: 👑 Host (Ready to Create)"
+                    StatusLabel.Text = "Status: 👑 Host (Auto-creating party lobby...)"
                     StatusLabel.TextColor3 = Color3.fromRGB(220, 220, 240)
                 end
             else
-                StatusLabel.Text = string.format("Status: 👥 Member (Targeting Host: %s)", Config.HostUsername)
-                StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
-                LaunchBtn.Text = "🔄 AUTO-JOINING HOST..."
-                LaunchBtn.BackgroundColor3 = Color3.fromRGB(50, 70, 100)
+                local inParty = isMemberInPartyGui(LocalPlayer.Name) or (LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("queueGui"))
+                if inParty then
+                    StatusLabel.Text = string.format("Status: ✅ In Party & Readied Up! (Waiting for %s to start)", Config.HostUsername)
+                    StatusLabel.TextColor3 = Color3.fromRGB(150, 255, 170)
+                else
+                    StatusLabel.Text = string.format("Status: 👥 Member (Auto-joining Host: %s...)", Config.HostUsername)
+                    StatusLabel.TextColor3 = Color3.fromRGB(200, 210, 230)
+                end
             end
         end
         task.wait(1.0)
     end
 end)
 
-print(string.format("[MAKI LAUNCHER] Loaded Party Launcher v1.0. Role: %s (Host: %s)", 
-    isCurrentHost() and "HOST" or "MEMBER", Config.HostUsername))
+print(string.format("[MAKI LAUNCHER v2.0] Autonomous Party Launcher online. Role: %s (Host: %s, Dungeon: %s - %s)", 
+    isCurrentHost() and "HOST" or "MEMBER", Config.HostUsername, Config.SelectedDungeon, Config.SelectedDifficulty))
