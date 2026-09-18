@@ -464,7 +464,7 @@ ScreenGui.Parent = parent
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 340, 0, 520)
-MainFrame.Position = UDim2.new(0, 40, 0, 120)
+MainFrame.Position = UDim2.new(1, -370, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -1069,7 +1069,7 @@ end)
 
 local FloatingBadge = Instance.new("TextButton")
 FloatingBadge.Size = UDim2.new(0, 36, 0, 36)
-FloatingBadge.Position = UDim2.new(0, 40, 0, 75)
+FloatingBadge.Position = UDim2.new(1, -50, 0, 75)
 FloatingBadge.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
 FloatingBadge.Text = "🎮"
 FloatingBadge.TextSize = 18
@@ -1090,13 +1090,34 @@ FloatingBadge.MouseButton1Click:Connect(function()
     FloatingBadge.Visible = false
 end)
 
+-- Initial Auto-Hide if loaded inside a dungeon
+if not isMainLobby() then
+    MainFrame.Visible = false
+    FloatingBadge.Visible = false
+end
+
+local wasInDungeon = not isMainLobby()
+
 -- Live Status Monitor Loop
 task.spawn(function()
     while _G.MAKI_PARTY_LAUNCHER_RUNNING and ScreenGui and ScreenGui.Parent do
         if not isMainLobby() then
+            if not wasInDungeon then
+                wasInDungeon = true
+                MainFrame.Visible = false
+                FloatingBadge.Visible = false
+                print("[Maki Party] 🟢 Inside dungeon: UI automatically hidden.")
+            end
             StatusLabel.Text = "Status: 🟢 Inside Dungeon (Party Complete)"
             StatusLabel.TextColor3 = Color3.fromRGB(140, 240, 160)
         else
+            if wasInDungeon then
+                wasInDungeon = false
+                MainFrame.Visible = true
+                FloatingBadge.Visible = false
+                print("[Maki Party] 🏰 Returned to lobby: UI automatically restored.")
+            end
+
             refreshWhitelistUI()
 
             if not Config.AutoLaunchEnabled then
