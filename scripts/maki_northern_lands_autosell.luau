@@ -1,7 +1,8 @@
 -- ========================================================================
---  MAKI STANDALONE NORTHERN LANDS AUTO-SELL COMPANION (v2.0)
---  • Zero Interference: Does NOT touch player movement, combat, or replay
+--  MAKI STANDALONE NORTHERN LANDS AUTO-SELL & TROPHY NOTIFIER (v2.1)
+--  • Zero Interference: Does NOT touch movement, combat, or replay
 --  • Auto-triggers 1.5s after Victory (Dungeon Finished)
+--  • Discord Webhook: 100% Silent UNLESS an Ultimate, Legendary, or Purple Valhalla drops!
 --  • Manual "SELL NL JUNK NOW" button on screen
 -- ========================================================================
 if _G.NL_AUTOSELL_RUNNING then
@@ -13,12 +14,54 @@ _G.NL_AUTOSELL_RUNNING = true
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 local remotes = ReplicatedStorage:WaitForChild("remotes")
 local reloadRemote = remotes:WaitForChild("reloadInvy")
 local sellRemote = remotes:WaitForChild("sellItemEvent")
+
+-- ========================================================================
+--  WEBHOOK CONFIGURATION (READ SAFELY FROM LOCAL DISK)
+-- ========================================================================
+local function getWebhookUrl()
+    if _G.NL_WEBHOOK_URL and _G.NL_WEBHOOK_URL ~= "" then
+        return _G.NL_WEBHOOK_URL
+    end
+    if typeof(readfile) == "function" and typeof(isfile) == "function" then
+        if isfile("nl_webhook.txt") then
+            local content = readfile("nl_webhook.txt")
+            if content and content:find("http") then
+                return content:match("^%s*(.-)%s*$") -- trim whitespace
+            end
+        end
+    end
+    return nil
+end
+
+local function sendDiscordWebhook(payload)
+    local url = getWebhookUrl()
+    if not url or url == "" then return end
+
+    local jsonBody = HttpService:JSONEncode(payload)
+    local httpFunc = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+
+    if httpFunc then
+        pcall(function()
+            httpFunc({
+                Url = url,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = jsonBody
+            })
+        end)
+    else
+        pcall(function()
+            HttpService:PostAsync(url, jsonBody, Enum.HttpContentType.ApplicationJson)
+        end)
+    end
+end
 
 -- ========================================================================
 --  FILTER: EXACT NORTHERN LANDS CUSTOM RULES
@@ -86,12 +129,128 @@ local function shouldSellItem(catKey, key, item)
 end
 
 -- ========================================================================
+--  INVENTORY BASELINE TRACKER (ENSURES NO DUPLICATE NOTIFICATIONS)
+-- ========================================================================
+local knownItemIds = {}
+
+local function recordCurrentInventoryBaseline(invy)
+    if type(invy) ~= "table" then return end
+    for catKey, tbl in pairs(invy) do
+        if type(tbl) == "table" then
+            for k, _ in pairs(tbl) do
+                local idNum = tonumber(string.match(k, "%d+"))
+                if idNum then
+                    knownItemIds[idNum] = true
+                end
+            end
+        end
+    end
+end
+
+-- Initialize baseline on load
+task.spawn(function()
+    local ok, invy = pcall(function() return reloadRemote:InvokeServer() end)
+    if ok and type(invy) == "table" then
+        recordCurrentInventoryBaseline(invy)
+        print(string.format("[NL Auto-Sell] Initialized inventory baseline (%d known items).", (function()
+            local c = 0; for _ in pairs(knownItemIds) do c = c + 1 end return c
+        end)()))
+    end
+end)
+
+-- ========================================================================
+--  TROPHY DROP NOTIFIER (ULTIMATE, LEGENDARY, & PURPLE VALHALLA ONLY)
+-- ========================================================================
+local function checkAndNotifyTrophyDrops(invy)
+    if type(invy) ~= "table" then return end
+    local trophyEmbeds = {}
+    local hasUltimate = false
+
+    local function inspectCategory(tbl, catName)
+        if type(tbl) ~= "table" then return end
+        for k, item in pairs(tbl) do
+            local idNum = tonumber(string.match(k, "%d+"))
+            -- Only inspect items that are brand-new drops from this round!
+            if idNum and not knownItemIds[idNum] then
+                local name = item.name or "Unknown Item"
+                local nameLower = string.lower(name)
+                local rarity = item.rarity or "Common"
+                local rarityLower = string.lower(rarity)
+
+                local isTrophy = false
+                local trophyTier = ""
+                local embedColor = 0xFFFFFF
+
+                -- 1. ULTIMATE DROPS (Any)
+                if rarityLower == "ultimate" then
+                    isTrophy = true
+                    hasUltimate = true
+                    trophyTier = "🌟 ULTIMATE DROP"
+                    embedColor = 16711765 -- Vibrant Crimson / Red
+
+                -- 2. LEGENDARY WEAPONS OR SPELLS
+                elseif rarityLower == "legendary" and (catName == "Weapons" or catName == "Abilities") then
+                    isTrophy = true
+                    trophyTier = "👑 LEGENDARY DROP"
+                    embedColor = 16766720 -- Gold
+
+                -- 3. ONLY PURPLE / EPIC VALHALLA
+                elseif nameLower:find("valhalla") and rarityLower == "epic" then
+                    isTrophy = true
+                    trophyTier = "🛡️ PURPLE VALHALLA DROP"
+                    embedColor = 10181046 -- Royal Purple
+                end
+
+                if isTrophy then
+                    table.insert(trophyEmbeds, {
+                        title = string.format("%s: %s", trophyTier, name),
+                        description = string.format("A holy grail item dropped in **Northern Lands** and is safely locked in your inventory!"),
+                        color = embedColor,
+                        fields = {
+                            {name = "Item Name", value = string.format("**%s**", name), inline = true},
+                            {name = "Category", value = catName, inline = true},
+                            {name = "Rarity", value = string.upper(rarity), inline = true},
+                            {name = "Player", value = LocalPlayer.Name, inline = true},
+                            {name = "Account Level", value = tostring(LocalPlayer:FindFirstChild("leaderstats") and LocalPlayer.leaderstats:FindFirstChild("Level") and LocalPlayer.leaderstats.Level.Value or "N/A"), inline = true}
+                        },
+                        footer = {text = "Maki Auto-Sell & Trophy Notifier • Northern Lands"},
+                        timestamp = DateTime.now():ToIsoDate()
+                    })
+                end
+            end
+        end
+    end
+
+    inspectCategory(invy.weapons, "Weapons")
+    inspectCategory(invy.abilities, "Abilities")
+    inspectCategory(invy.chests, "Armor (Chest)")
+    inspectCategory(invy.helmets, "Armor (Helmet)")
+
+    -- If any trophies dropped, send the webhook!
+    if #trophyEmbeds > 0 then
+        local payload = {
+            content = hasUltimate and "@everyone 🚨 **ULTIMATE DROP DETECTED IN NORTHERN LANDS!** 🚨" or "🏆 **Rare Trophy Loot Dropped!**",
+            embeds = trophyEmbeds
+        }
+        sendDiscordWebhook(payload)
+        print(string.format("[NL Drop Notifier 🎯] Webhook sent for %d trophy drops!", #trophyEmbeds))
+    end
+
+    -- Update known inventory baseline
+    recordCurrentInventoryBaseline(invy)
+end
+
+-- ========================================================================
 --  EXECUTE AUTO-SELL
 -- ========================================================================
 local function runAutoSell()
     local ok, invy = pcall(function() return reloadRemote:InvokeServer() end)
     if not ok or type(invy) ~= "table" then return 0, 0 end
 
+    -- 1. Check for trophy drops before selling anything
+    checkAndNotifyTrophyDrops(invy)
+
+    -- 2. Build sell batch payload
     local payload = {weapon = {}, ability = {}, chest = {}, helmet = {}}
     local soldCount, keptCount = 0, 0
 
@@ -182,4 +341,4 @@ task.spawn(function()
     end
 end)
 
-print("[NL Auto-Sell] Companion v2.0 active! Automatically sells on Victory without touching replay.")
+print("[NL Auto-Sell] Companion v2.1 active with Trophy Discord Webhook Notifier!")
