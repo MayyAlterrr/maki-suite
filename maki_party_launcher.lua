@@ -158,6 +158,9 @@ local function loadConfig()
             end
         end
     end
+    if not Config.WhitelistedAccounts or type(Config.WhitelistedAccounts) ~= "table" then
+        Config.WhitelistedAccounts = {}
+    end
     -- Default host to local player if empty
     if not Config.HostUsername or #Config.HostUsername == 0 then
         Config.HostUsername = LocalPlayer.Name
@@ -215,6 +218,9 @@ local function addWhitelistAccount(name)
     if isAccountWhitelisted(trimmed) then return false end
     table.insert(Config.WhitelistedAccounts, trimmed)
     saveConfig()
+    if isLobbyActive and addPlayerToWhitelistRemote then
+        pcall(function() addPlayerToWhitelistRemote:FireServer(trimmed) end)
+    end
     return true
 end
 
@@ -818,6 +824,8 @@ AccInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 AccInputBox.TextSize = 12
 AccInputBox.Font = Enum.Font.Gotham
 AccInputBox.ClearTextOnFocus = false
+AccInputBox.ZIndex = 5
+AccInputBox.Active = true
 AccInputBox.Parent = AccountsCard
 
 local AccBoxCorner = Instance.new("UICorner")
@@ -833,6 +841,8 @@ AddAccBtn.Text = "+ Add"
 AddAccBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 AddAccBtn.TextSize = 11
 AddAccBtn.Font = Enum.Font.GothamBold
+AddAccBtn.ZIndex = 5
+AddAccBtn.Active = true
 AddAccBtn.Parent = AccountsCard
 
 local AddAccCorner = Instance.new("UICorner")
@@ -847,6 +857,7 @@ AccScroll.BorderSizePixel = 0
 AccScroll.ScrollBarThickness = 3
 AccScroll.ScrollBarImageColor3 = Color3.fromRGB(55, 65, 85)
 AccScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+AccScroll.ZIndex = 4
 AccScroll.Parent = AccountsCard
 
 local AccScrollCorner = Instance.new("UICorner")
@@ -905,10 +916,30 @@ StatusLabel.Parent = ActionCard
 -- ========================================================================
 --  [8] UI CONTROLLER & EVENT CONNECTIONS
 -- ========================================================================
+local function bindButtonClick(btn, callback)
+    btn.Active = true
+    local lastClick = 0
+    local function debounced(...)
+        local now = os.clock()
+        if now - lastClick < 0.2 then return end
+        lastClick = now
+        callback(...)
+    end
+    btn.MouseButton1Click:Connect(debounced)
+    pcall(function()
+        if typeof(btn.Activated) == "RBXScriptSignal" or btn.Activated then
+            btn.Activated:Connect(debounced)
+        end
+    end)
+end
+
+local accountRowLabels = {}
+
 local function refreshWhitelistUI()
     for _, child in ipairs(AccScroll:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
     end
+    accountRowLabels = {}
 
     local totalHeight = 0
     local rowHeight = 24
@@ -918,6 +949,7 @@ local function refreshWhitelistUI()
         Row.Size = UDim2.new(1, 0, 0, rowHeight)
         Row.BackgroundColor3 = Color3.fromRGB(28, 33, 44)
         Row.BorderSizePixel = 0
+        Row.ZIndex = 5
         Row.Parent = AccScroll
 
         local RowCorner = Instance.new("UICorner")
@@ -928,7 +960,7 @@ local function refreshWhitelistUI()
         local statusIcon = isJoined and "✅" or "🔄"
 
         local NameLbl = Instance.new("TextLabel")
-        NameLbl.Size = UDim2.new(1, -30, 1, 0)
+        NameLbl.Size = UDim2.new(1, -36, 1, 0)
         NameLbl.Position = UDim2.new(0, 8, 0, 0)
         NameLbl.BackgroundTransparency = 1
         NameLbl.Text = string.format("%d. %s %s", idx, name, statusIcon)
@@ -936,25 +968,32 @@ local function refreshWhitelistUI()
         NameLbl.TextSize = 11
         NameLbl.Font = Enum.Font.GothamMedium
         NameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        NameLbl.ZIndex = 6
         NameLbl.Parent = Row
 
+        accountRowLabels[string.lower(name)] = NameLbl
+
         local DelBtn = Instance.new("TextButton")
-        DelBtn.Size = UDim2.new(0, 20, 0, 20)
-        DelBtn.Position = UDim2.new(1, -22, 0.5, -10)
-        DelBtn.BackgroundColor3 = Color3.fromRGB(60, 30, 35)
+        DelBtn.Size = UDim2.new(0, 22, 0, 20)
+        DelBtn.Position = UDim2.new(1, -26, 0.5, -10)
+        DelBtn.BackgroundColor3 = Color3.fromRGB(70, 32, 38)
         DelBtn.BorderSizePixel = 0
         DelBtn.Text = "✕"
-        DelBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
-        DelBtn.TextSize = 10
+        DelBtn.TextColor3 = Color3.fromRGB(255, 110, 110)
+        DelBtn.TextSize = 11
         DelBtn.Font = Enum.Font.GothamBold
+        DelBtn.ZIndex = 7
+        DelBtn.Active = true
         DelBtn.Parent = Row
 
         local DelCorner = Instance.new("UICorner")
         DelCorner.CornerRadius = UDim.new(0, 4)
         DelCorner.Parent = DelBtn
 
-        DelBtn.MouseButton1Click:Connect(function()
-            removeWhitelistAccount(name)
+        local capturedName = name
+        bindButtonClick(DelBtn, function()
+            print("[Maki Party] 🗑️ Removing whitelisted account: " .. tostring(capturedName))
+            removeWhitelistAccount(capturedName)
             refreshWhitelistUI()
         end)
 
@@ -965,10 +1004,22 @@ local function refreshWhitelistUI()
     AccHeader.Text = string.format("WHITELISTED PARTY ACCOUNTS (%d):", #Config.WhitelistedAccounts)
 end
 
+local function updateWhitelistStatus()
+    for idx, name in ipairs(Config.WhitelistedAccounts) do
+        local lbl = accountRowLabels[string.lower(name)]
+        if lbl and lbl.Parent then
+            local isJoined = joinedMembers[string.lower(name)] or isMemberInPartyGui(name)
+            local statusIcon = isJoined and "✅" or "🔄"
+            lbl.Text = string.format("%d. %s %s", idx, name, statusIcon)
+            lbl.TextColor3 = isJoined and Color3.fromRGB(150, 255, 170) or Color3.fromRGB(225, 230, 240)
+        end
+    end
+end
+
 refreshWhitelistUI()
 
 -- Set Me As Host
-SetHostBtn.MouseButton1Click:Connect(function()
+bindButtonClick(SetHostBtn, function()
     Config.HostUsername = LocalPlayer.Name
     HostBox.Text = LocalPlayer.Name
     saveConfig()
@@ -988,19 +1039,46 @@ end)
 -- Add Account Handler
 local function handleAddAcc()
     local text = AccInputBox.Text
-    if addWhitelistAccount(text) then
+    local trimmed = text and text:match("^%s*(.-)%s*$")
+    if not trimmed or #trimmed == 0 then
+        return
+    end
+
+    if isAccountWhitelisted(trimmed) then
+        print("[Maki Party] ⚠️ Account already in whitelist: " .. trimmed)
+        local origColor = AccInputBox.BackgroundColor3
+        AccInputBox.BackgroundColor3 = Color3.fromRGB(70, 50, 25)
+        task.delay(0.4, function()
+            if AccInputBox and AccInputBox.Parent then
+                AccInputBox.BackgroundColor3 = origColor
+            end
+        end)
+        return
+    end
+
+    if addWhitelistAccount(trimmed) then
+        print("[Maki Party] ➕ Added account to whitelist: " .. trimmed)
         AccInputBox.Text = ""
         refreshWhitelistUI()
+        local origBtnColor = AddAccBtn.BackgroundColor3
+        AddAccBtn.BackgroundColor3 = Color3.fromRGB(50, 180, 100)
+        task.delay(0.3, function()
+            if AddAccBtn and AddAccBtn.Parent then
+                AddAccBtn.BackgroundColor3 = origBtnColor
+            end
+        end)
     end
 end
 
-AddAccBtn.MouseButton1Click:Connect(handleAddAcc)
+bindButtonClick(AddAccBtn, handleAddAcc)
 AccInputBox.FocusLost:Connect(function(enter)
-    if enter then handleAddAcc() end
+    if enter then
+        handleAddAcc()
+    end
 end)
 
 -- Dungeon Cycle Handlers (With Instant Persistence)
-DungeonPrevBtn.MouseButton1Click:Connect(function()
+bindButtonClick(DungeonPrevBtn, function()
     currentDungeonIdx = currentDungeonIdx - 1
     if currentDungeonIdx < 1 then currentDungeonIdx = #DUNGEONS end
     Config.SelectedDungeon = DUNGEONS[currentDungeonIdx]
@@ -1010,7 +1088,7 @@ DungeonPrevBtn.MouseButton1Click:Connect(function()
     print("[Maki Party] 💾 Saved Dungeon: " .. Config.SelectedDungeon)
 end)
 
-DungeonNextBtn.MouseButton1Click:Connect(function()
+bindButtonClick(DungeonNextBtn, function()
     currentDungeonIdx = currentDungeonIdx + 1
     if currentDungeonIdx > #DUNGEONS then currentDungeonIdx = 1 end
     Config.SelectedDungeon = DUNGEONS[currentDungeonIdx]
@@ -1021,7 +1099,7 @@ DungeonNextBtn.MouseButton1Click:Connect(function()
 end)
 
 -- Difficulty Cycle Handlers (With Instant Persistence)
-DiffPrevBtn.MouseButton1Click:Connect(function()
+bindButtonClick(DiffPrevBtn, function()
     currentDiffIdx = currentDiffIdx - 1
     if currentDiffIdx < 1 then currentDiffIdx = #DIFFICULTIES end
     Config.SelectedDifficulty = DIFFICULTIES[currentDiffIdx]
@@ -1031,7 +1109,7 @@ DiffPrevBtn.MouseButton1Click:Connect(function()
     print("[Maki Party] 💾 Saved Difficulty: " .. Config.SelectedDifficulty)
 end)
 
-DiffNextBtn.MouseButton1Click:Connect(function()
+bindButtonClick(DiffNextBtn, function()
     currentDiffIdx = currentDiffIdx + 1
     if currentDiffIdx > #DIFFICULTIES then currentDiffIdx = 1 end
     Config.SelectedDifficulty = DIFFICULTIES[currentDiffIdx]
@@ -1042,7 +1120,7 @@ DiffNextBtn.MouseButton1Click:Connect(function()
 end)
 
 -- Hardcore Toggle Handler
-HardcoreBtn.MouseButton1Click:Connect(function()
+bindButtonClick(HardcoreBtn, function()
     Config.HardcoreMode = not Config.HardcoreMode
     HardcoreBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(150, 40, 45) or Color3.fromRGB(40, 45, 60)
     HardcoreBtn.Text = Config.HardcoreMode and "🔥 Hardcore Mode: ON" or "🛡️ Hardcore Mode: OFF"
@@ -1052,7 +1130,7 @@ HardcoreBtn.MouseButton1Click:Connect(function()
 end)
 
 -- Auto-Launch Toggle Button
-LaunchBtn.MouseButton1Click:Connect(function()
+bindButtonClick(LaunchBtn, function()
     Config.AutoLaunchEnabled = not Config.AutoLaunchEnabled
     LaunchBtn.BackgroundColor3 = Config.AutoLaunchEnabled and Color3.fromRGB(40, 140, 80) or Color3.fromRGB(70, 75, 90)
     LaunchBtn.Text = Config.AutoLaunchEnabled and "⚡ AUTO-LAUNCH: ACTIVE" or "⏸️ AUTO-LAUNCH: PAUSED"
@@ -1061,7 +1139,7 @@ end)
 
 -- Minimize & Hide Controls
 local isMin = false
-MinBtn.MouseButton1Click:Connect(function()
+bindButtonClick(MinBtn, function()
     isMin = not isMin
     if isMin then
         MainFrame.Size = UDim2.new(0, 340, 0, 36)
@@ -1081,18 +1159,19 @@ FloatingBadge.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
 FloatingBadge.Text = "🎮"
 FloatingBadge.TextSize = 18
 FloatingBadge.Visible = false
+FloatingBadge.Active = true
 FloatingBadge.Parent = ScreenGui
 
 local BadgeCorner = Instance.new("UICorner")
 BadgeCorner.CornerRadius = UDim.new(1, 0)
 BadgeCorner.Parent = FloatingBadge
 
-CloseBtn.MouseButton1Click:Connect(function()
+bindButtonClick(CloseBtn, function()
     MainFrame.Visible = false
     FloatingBadge.Visible = true
 end)
 
-FloatingBadge.MouseButton1Click:Connect(function()
+bindButtonClick(FloatingBadge, function()
     MainFrame.Visible = true
     FloatingBadge.Visible = false
 end)
@@ -1126,7 +1205,7 @@ task.spawn(function()
                 print("[Maki Party] 🏰 Returned to lobby: UI automatically restored.")
             end
 
-            refreshWhitelistUI()
+            updateWhitelistStatus()
 
             if not Config.AutoLaunchEnabled then
                 StatusLabel.Text = "Status: ⏸️ Automation Paused (Click button to resume)"
