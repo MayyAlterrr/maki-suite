@@ -233,19 +233,24 @@ end
 -- ========================================================================
 --  [4] ENVIRONMENT CHECK
 -- ========================================================================
-local function isMainLobby()
-    if game.PlaceId == 77649408247578 or game.PlaceId == 2414851778 then
-        return true
-    end
+local function isDungeon()
     local dName = Workspace:FindFirstChild("dungeonName")
     if dName and dName:IsA("StringValue") and #dName.Value > 0 then
-        return false
+        return true
     end
     local dObj = Workspace:FindFirstChild("dungeon")
     if dObj then
-        return false
+        return true
     end
-    return true
+    local dProg = Workspace:FindFirstChild("dungeonProgress")
+    if dProg and dProg:IsA("StringValue") and #dProg.Value > 0 then
+        return true
+    end
+    return false
+end
+
+local function isMainLobby()
+    return not isDungeon()
 end
 
 local function isCurrentHost()
@@ -459,6 +464,7 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MakiPartyLauncherGui"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Enabled = isMainLobby()
 ScreenGui.Parent = parent
 
 local MainFrame = Instance.new("Frame")
@@ -469,6 +475,7 @@ MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.ClipsDescendants = true
+MainFrame.Visible = isMainLobby()
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
@@ -1092,6 +1099,7 @@ end)
 
 -- Initial Auto-Hide if loaded inside a dungeon
 if not isMainLobby() then
+    ScreenGui.Enabled = false
     MainFrame.Visible = false
     FloatingBadge.Visible = false
 end
@@ -1102,17 +1110,17 @@ local wasInDungeon = not isMainLobby()
 task.spawn(function()
     while _G.MAKI_PARTY_LAUNCHER_RUNNING and ScreenGui and ScreenGui.Parent do
         if not isMainLobby() then
-            if not wasInDungeon then
+            if not wasInDungeon or ScreenGui.Enabled or MainFrame.Visible or FloatingBadge.Visible then
                 wasInDungeon = true
+                ScreenGui.Enabled = false
                 MainFrame.Visible = false
                 FloatingBadge.Visible = false
-                print("[Maki Party] 🟢 Inside dungeon: UI automatically hidden.")
+                print("[Maki Party] 🟢 Inside dungeon: UI completely hidden.")
             end
-            StatusLabel.Text = "Status: 🟢 Inside Dungeon (Party Complete)"
-            StatusLabel.TextColor3 = Color3.fromRGB(140, 240, 160)
         else
-            if wasInDungeon then
+            if wasInDungeon or not ScreenGui.Enabled or not MainFrame.Visible then
                 wasInDungeon = false
+                ScreenGui.Enabled = true
                 MainFrame.Visible = true
                 FloatingBadge.Visible = false
                 print("[Maki Party] 🏰 Returned to lobby: UI automatically restored.")
