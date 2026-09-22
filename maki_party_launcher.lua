@@ -141,9 +141,12 @@ local function safeWriteFile(fileName, content)
     return false
 end
 
+local lastConfigFileContent = ""
+
 local function saveConfig()
     local ok, encoded = pcall(function() return HttpService:JSONEncode(Config) end)
     if ok and encoded then
+        lastConfigFileContent = encoded
         safeWriteFile(CONFIG_FILE, encoded)
     end
 end
@@ -151,6 +154,7 @@ end
 local function loadConfig()
     local raw = safeReadFile(CONFIG_FILE)
     if raw then
+        lastConfigFileContent = raw
         local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
         if ok and type(parsed) == "table" then
             for k, v in pairs(parsed) do
@@ -475,7 +479,7 @@ ScreenGui.Parent = parent
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 340, 0, 520)
+MainFrame.Size = UDim2.new(0, 340, 0, 540)
 MainFrame.Position = UDim2.new(1, -370, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
@@ -493,10 +497,77 @@ MainStroke.Color = Color3.fromRGB(60, 70, 95)
 MainStroke.Thickness = 1.5
 MainStroke.Parent = MainFrame
 
--- Draggable handler
+-- Title Bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 36)
+TitleBar.BackgroundColor3 = Color3.fromRGB(26, 30, 40)
+TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 10
+TitleBar.Active = true
+TitleBar.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 10)
+TitleCorner.Parent = TitleBar
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Size = UDim2.new(1, -70, 1, 0)
+TitleLabel.Position = UDim2.new(0, 12, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "🎮 MAKI PARTY LAUNCHER"
+TitleLabel.TextColor3 = Color3.fromRGB(240, 240, 250)
+TitleLabel.TextSize = 13
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.ZIndex = 11
+TitleLabel.Parent = TitleBar
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Name = "MinBtn"
+MinBtn.Size = UDim2.new(0, 26, 0, 24)
+MinBtn.Position = UDim2.new(1, -60, 0, 6)
+MinBtn.BackgroundColor3 = Color3.fromRGB(40, 46, 62)
+MinBtn.BorderSizePixel = 0
+MinBtn.Text = "—"
+MinBtn.TextColor3 = Color3.fromRGB(200, 200, 215)
+MinBtn.TextSize = 13
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.ZIndex = 20
+MinBtn.Active = true
+MinBtn.Parent = TitleBar
+
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 6)
+MinCorner.Parent = MinBtn
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "CloseBtn"
+CloseBtn.Size = UDim2.new(0, 26, 0, 24)
+CloseBtn.Position = UDim2.new(1, -30, 0, 6)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(75, 25, 30)
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+CloseBtn.TextSize = 12
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.ZIndex = 20
+CloseBtn.Active = true
+CloseBtn.Parent = TitleBar
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseBtn
+
+-- Draggable handler (Attached to TitleBar, avoiding MinBtn/CloseBtn interference)
 local dragging, dragInput, dragStart, startPos
-MainFrame.InputBegan:Connect(function(input)
+TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local relX = input.Position.X - TitleBar.AbsolutePosition.X
+        if relX > TitleBar.AbsoluteSize.X - 64 then
+            return
+        end
         dragging = true
         dragStart = input.Position
         startPos = MainFrame.Position
@@ -508,14 +579,14 @@ MainFrame.InputBegan:Connect(function(input)
     end
 end)
 
-MainFrame.InputChanged:Connect(function(input)
+TitleBar.InputChanged:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
+    if input == dragInput and dragging and startPos and dragStart then
         local delta = input.Position - dragStart
         MainFrame.Position = UDim2.new(
             startPos.X.Scale,
@@ -525,56 +596,6 @@ UserInputService.InputChanged:Connect(function(input)
         )
     end
 end)
-
--- Title Bar
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 36)
-TitleBar.BackgroundColor3 = Color3.fromRGB(26, 30, 40)
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = MainFrame
-
-local TitleCorner = Instance.new("UICorner")
-TitleCorner.CornerRadius = UDim.new(0, 10)
-TitleCorner.Parent = TitleBar
-
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -70, 1, 0)
-TitleLabel.Position = UDim2.new(0, 12, 0, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "🎮 MAKI PARTY LAUNCHER"
-TitleLabel.TextColor3 = Color3.fromRGB(240, 240, 250)
-TitleLabel.TextSize = 13
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.Parent = TitleBar
-
-local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 24, 0, 24)
-MinBtn.Position = UDim2.new(1, -56, 0, 6)
-MinBtn.BackgroundColor3 = Color3.fromRGB(40, 46, 62)
-MinBtn.Text = "—"
-MinBtn.TextColor3 = Color3.fromRGB(200, 200, 215)
-MinBtn.TextSize = 13
-MinBtn.Font = Enum.Font.GothamBold
-MinBtn.Parent = TitleBar
-
-local MinCorner = Instance.new("UICorner")
-MinCorner.CornerRadius = UDim.new(0, 6)
-MinCorner.Parent = MinBtn
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 24, 0, 24)
-CloseBtn.Position = UDim2.new(1, -28, 0, 6)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(75, 25, 30)
-CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
-CloseBtn.TextSize = 12
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.Parent = TitleBar
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 6)
-CloseCorner.Parent = CloseBtn
 
 -- Content Scrollable Container
 local Content = Instance.new("ScrollingFrame")
@@ -913,6 +934,28 @@ StatusLabel.Font = Enum.Font.GothamMedium
 StatusLabel.TextWrapped = true
 StatusLabel.Parent = ActionCard
 
+-- [5] Reset Configuration Button
+local ResetBtn = Instance.new("TextButton")
+ResetBtn.Size = UDim2.new(1, 0, 0, 32)
+ResetBtn.BackgroundColor3 = Color3.fromRGB(36, 28, 34)
+ResetBtn.BorderSizePixel = 0
+ResetBtn.Text = "↺ Reset Configuration to Defaults"
+ResetBtn.TextColor3 = Color3.fromRGB(235, 135, 135)
+ResetBtn.TextSize = 11
+ResetBtn.Font = Enum.Font.GothamBold
+ResetBtn.ZIndex = 5
+ResetBtn.Active = true
+ResetBtn.Parent = Content
+
+local ResetCorner = Instance.new("UICorner")
+ResetCorner.CornerRadius = UDim.new(0, 8)
+ResetCorner.Parent = ResetBtn
+
+local ResetStroke = Instance.new("UIStroke")
+ResetStroke.Color = Color3.fromRGB(80, 45, 55)
+ResetStroke.Thickness = 1
+ResetStroke.Parent = ResetBtn
+
 -- ========================================================================
 --  [8] UI CONTROLLER & EVENT CONNECTIONS
 -- ========================================================================
@@ -1137,44 +1180,185 @@ bindButtonClick(LaunchBtn, function()
     saveConfig()
 end)
 
+-- Reset Configuration Handler
+local function handleResetConfig()
+    print("[Maki Party] ⚠️ Resetting configuration to defaults...")
+    Config.HostUsername = LocalPlayer.Name
+    Config.WhitelistedAccounts = {}
+    Config.SelectedDungeon = "Northern Lands"
+    Config.SelectedDifficulty = "Nightmare"
+    Config.HardcoreMode = false
+    Config.AutoLaunchEnabled = true
+
+    saveConfig()
+
+    HostBox.Text = LocalPlayer.Name
+    syncDungeonIndex()
+    DungeonNameLabel.Text = Config.SelectedDungeon
+    syncDiffIndex()
+    DiffNameLabel.Text = Config.SelectedDifficulty
+    HardcoreBtn.BackgroundColor3 = Color3.fromRGB(40, 45, 60)
+    HardcoreBtn.Text = "🛡️ Hardcore Mode: OFF"
+    LaunchBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 80)
+    LaunchBtn.Text = "⚡ AUTO-LAUNCH: ACTIVE"
+    refreshWhitelistUI()
+    isLobbyActive = false
+
+    ResetBtn.Text = "✅ Config Reset to Defaults!"
+    ResetBtn.BackgroundColor3 = Color3.fromRGB(30, 70, 45)
+    ResetBtn.TextColor3 = Color3.fromRGB(150, 255, 180)
+    task.delay(1.5, function()
+        if ResetBtn and ResetBtn.Parent then
+            ResetBtn.Text = "↺ Reset Configuration to Defaults"
+            ResetBtn.BackgroundColor3 = Color3.fromRGB(36, 28, 34)
+            ResetBtn.TextColor3 = Color3.fromRGB(235, 135, 135)
+        end
+    end)
+end
+
+bindButtonClick(ResetBtn, handleResetConfig)
+
 -- Minimize & Hide Controls
+local isUserClosed = false
 local isMin = false
+local NORMAL_FRAME_HEIGHT = 540
+
 bindButtonClick(MinBtn, function()
     isMin = not isMin
     if isMin then
         MainFrame.Size = UDim2.new(0, 340, 0, 36)
         Content.Visible = false
         MinBtn.Text = "+"
+        MinBtn.TextColor3 = Color3.fromRGB(120, 255, 150)
     else
-        MainFrame.Size = UDim2.new(0, 340, 0, 520)
+        MainFrame.Size = UDim2.new(0, 340, 0, NORMAL_FRAME_HEIGHT)
         Content.Visible = true
         MinBtn.Text = "—"
+        MinBtn.TextColor3 = Color3.fromRGB(200, 200, 215)
     end
 end)
 
 local FloatingBadge = Instance.new("TextButton")
-FloatingBadge.Size = UDim2.new(0, 36, 0, 36)
-FloatingBadge.Position = UDim2.new(1, -50, 0, 75)
+FloatingBadge.Name = "FloatingBadge"
+FloatingBadge.Size = UDim2.new(0, 40, 0, 40)
+FloatingBadge.Position = UDim2.new(1, -54, 0, 80)
 FloatingBadge.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+FloatingBadge.BorderSizePixel = 0
 FloatingBadge.Text = "🎮"
-FloatingBadge.TextSize = 18
+FloatingBadge.TextSize = 20
 FloatingBadge.Visible = false
 FloatingBadge.Active = true
+FloatingBadge.ZIndex = 100
 FloatingBadge.Parent = ScreenGui
 
 local BadgeCorner = Instance.new("UICorner")
 BadgeCorner.CornerRadius = UDim.new(1, 0)
 BadgeCorner.Parent = FloatingBadge
 
+local BadgeStroke = Instance.new("UIStroke")
+BadgeStroke.Color = Color3.fromRGB(80, 120, 200)
+BadgeStroke.Thickness = 1.5
+BadgeStroke.Parent = FloatingBadge
+
 bindButtonClick(CloseBtn, function()
+    isUserClosed = true
     MainFrame.Visible = false
     FloatingBadge.Visible = true
 end)
 
 bindButtonClick(FloatingBadge, function()
+    isUserClosed = false
     MainFrame.Visible = true
     FloatingBadge.Visible = false
 end)
+
+-- Multi-Account / Multi-Instance Live Config Synchronization
+local function applyConfigChanges(parsed)
+    local changed = false
+
+    if parsed.HostUsername and parsed.HostUsername ~= Config.HostUsername then
+        Config.HostUsername = parsed.HostUsername
+        if HostBox and not HostBox:IsFocused() then
+            HostBox.Text = Config.HostUsername
+        end
+        isLobbyActive = false
+        changed = true
+    end
+
+    if parsed.SelectedDungeon and parsed.SelectedDungeon ~= Config.SelectedDungeon then
+        Config.SelectedDungeon = parsed.SelectedDungeon
+        syncDungeonIndex()
+        if DungeonNameLabel then
+            DungeonNameLabel.Text = Config.SelectedDungeon
+        end
+        isLobbyActive = false
+        changed = true
+    end
+
+    if parsed.SelectedDifficulty and parsed.SelectedDifficulty ~= Config.SelectedDifficulty then
+        Config.SelectedDifficulty = parsed.SelectedDifficulty
+        syncDiffIndex()
+        if DiffNameLabel then
+            DiffNameLabel.Text = Config.SelectedDifficulty
+        end
+        isLobbyActive = false
+        changed = true
+    end
+
+    if parsed.HardcoreMode ~= nil and parsed.HardcoreMode ~= Config.HardcoreMode then
+        Config.HardcoreMode = parsed.HardcoreMode
+        if HardcoreBtn then
+            HardcoreBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(150, 40, 45) or Color3.fromRGB(40, 45, 60)
+            HardcoreBtn.Text = Config.HardcoreMode and "🔥 Hardcore Mode: ON" or "🛡️ Hardcore Mode: OFF"
+        end
+        isLobbyActive = false
+        changed = true
+    end
+
+    if parsed.AutoLaunchEnabled ~= nil and parsed.AutoLaunchEnabled ~= Config.AutoLaunchEnabled then
+        Config.AutoLaunchEnabled = parsed.AutoLaunchEnabled
+        if LaunchBtn then
+            LaunchBtn.BackgroundColor3 = Config.AutoLaunchEnabled and Color3.fromRGB(40, 140, 80) or Color3.fromRGB(70, 75, 90)
+            LaunchBtn.Text = Config.AutoLaunchEnabled and "⚡ AUTO-LAUNCH: ACTIVE" or "⏸️ AUTO-LAUNCH: PAUSED"
+        end
+        changed = true
+    end
+
+    if type(parsed.WhitelistedAccounts) == "table" then
+        local wlChanged = false
+        if #parsed.WhitelistedAccounts ~= #Config.WhitelistedAccounts then
+            wlChanged = true
+        else
+            for i = 1, #parsed.WhitelistedAccounts do
+                if parsed.WhitelistedAccounts[i] ~= Config.WhitelistedAccounts[i] then
+                    wlChanged = true
+                    break
+                end
+            end
+        end
+        if wlChanged then
+            Config.WhitelistedAccounts = parsed.WhitelistedAccounts
+            refreshWhitelistUI()
+            changed = true
+        end
+    end
+
+    if changed then
+        print(string.format("[Maki Party] 🔄 Sync from shared config: Host=%s, Dungeon=%s (%s), Whitelist=%d",
+            Config.HostUsername, Config.SelectedDungeon, Config.SelectedDifficulty, #Config.WhitelistedAccounts))
+    end
+end
+
+local function checkDiskConfigSync()
+    local raw = safeReadFile(CONFIG_FILE)
+    if raw and raw ~= lastConfigFileContent and #raw > 0 then
+        lastConfigFileContent = raw
+        local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
+        if ok and type(parsed) == "table" then
+            applyConfigChanges(parsed)
+        end
+    end
+end
 
 -- Initial Auto-Hide if loaded inside a dungeon
 if not isMainLobby() then
@@ -1197,14 +1381,24 @@ task.spawn(function()
                 print("[Maki Party] 🟢 Inside dungeon: UI completely hidden.")
             end
         else
-            if wasInDungeon or not ScreenGui.Enabled or not MainFrame.Visible then
+            -- Check if returning from dungeon to lobby
+            if wasInDungeon then
                 wasInDungeon = false
                 ScreenGui.Enabled = true
-                MainFrame.Visible = true
-                FloatingBadge.Visible = false
+                if isUserClosed then
+                    MainFrame.Visible = false
+                    FloatingBadge.Visible = true
+                else
+                    MainFrame.Visible = true
+                    FloatingBadge.Visible = false
+                end
                 print("[Maki Party] 🏰 Returned to lobby: UI automatically restored.")
             end
 
+            -- Live sync from disk (other accounts/clients)
+            checkDiskConfigSync()
+
+            -- Live account status icons
             updateWhitelistStatus()
 
             if not Config.AutoLaunchEnabled then
