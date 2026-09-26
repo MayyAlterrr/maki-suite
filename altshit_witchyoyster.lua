@@ -1,8 +1,16 @@
 -- ========================================================================
 --  PROJECT MAKI: ALTSHIT WITCHYOYSTER
---  VERSION: 1.0 (AUTONOMOUS SWARM & ANTI-BOT DUNGEON COMPANION)
+--  VERSION: 2.0 (WHITE SCREEN & ULTIMATE FPS BOOST EDITION)
 -- ========================================================================
 --  FEATURES:
+--    • White Screen & Ultimate FPS Boost:
+--        - Native 3D Rendering Freeze (RunService:Set3dRenderingEnabled(false))
+--          dropping GPU usage to near 0%!
+--        - 15 FPS Throttler (setfpscap(15)) reducing CPU cycles to minimum.
+--        - Fullscreen White Screen HUD overlay displaying live alt status.
+--        - Complete graphics purger: disables global shadows, post-processing,
+--          atmosphere, particles, decals, and simplifies terrain/materials.
+--        - Instant 1-click & Hotkey (F8) toggling between White Screen & 3D view.
 --    • Main Lobby:
 --        - Automatically and continuously spams join requests to "WitchyOyster".
 --        - Automatically readies up when in party / queueGui.
@@ -21,8 +29,8 @@
 --        - Polling monitor that detects when WitchyOyster teleports back to lobby.
 --        - Automatically executes return to lobby for all alts!
 --        - Automatically resumes join spam once landed in the lobby!
---    • Compact Cyber-Violet HUD:
---        - Live status, target host box, moves/casts counters, minimize & hide.
+--    • Modern Dual HUD:
+--        - White screen centered control card + compact 3D HUD with F8 toggle.
 -- ========================================================================
 
 local Players             = game:GetService("Players")
@@ -31,6 +39,8 @@ local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local TeleportService     = game:GetService("TeleportService")
 local VirtualUser         = game:GetService("VirtualUser")
 local UserInputService    = game:GetService("UserInputService")
+local RunService          = game:GetService("RunService")
+local Lighting            = game:GetService("Lighting")
 local CoreGui             = game:GetService("CoreGui")
 local HttpService         = game:GetService("HttpService")
 local LocalPlayer         = Players.LocalPlayer
@@ -58,13 +68,17 @@ end
 -- ========================================================================
 --  [1] CONFIGURATION & STATE
 -- ========================================================================
-local TARGET_HOST = "WitchyOyster"
-local AutomationEnabled = true
-local isReturningToLobby = false
-local hostSeenInDungeon = false
-local dungeonEntryTime = 0
-local totalMoves = 0
-local totalCasts = 0
+local TARGET_HOST         = "WitchyOyster"
+local AutomationEnabled   = true
+local WhiteScreenEnabled  = true
+local LowFpsCap           = 15
+local NormalFpsCap        = 60
+
+local isReturningToLobby  = false
+local hostSeenInDungeon   = false
+local dungeonEntryTime    = 0
+local totalMoves          = 0
+local totalCasts          = 0
 
 -- Anti-AFK Prevention
 LocalPlayer.Idled:Connect(function()
@@ -269,7 +283,83 @@ local function getRandomMoveTarget(centerPos, minRadius, maxRadius)
 end
 
 -- ========================================================================
---  [7] BACKGROUND AUTOMATION THREADS
+--  [7] ULTIMATE FPS BOOST & 3D RENDERING FREEZE
+-- ========================================================================
+local function set3dRendering(enabled)
+    pcall(function()
+        RunService:Set3dRenderingEnabled(enabled)
+    end)
+    if setfpscap then
+        pcall(function()
+            setfpscap(enabled and NormalFpsCap or LowFpsCap)
+        end)
+    end
+end
+
+local function applyUltimateFpsBoost()
+    -- 1. Lighting & Post-Processing
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 0
+        for _, effect in ipairs(Lighting:GetChildren()) do
+            if effect:IsA("PostProcessEffect") or effect:IsA("Atmosphere") or effect:IsA("Clouds") or effect:IsA("Sky") then
+                pcall(function() effect.Enabled = false end)
+            end
+        end
+    end)
+
+    -- 2. Terrain Water Simplification
+    local terrain = Workspace:FindFirstChildOfClass("Terrain")
+    if terrain then
+        pcall(function()
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 0
+        end)
+    end
+
+    -- 3. Strip Visual Particles, Decals, Textures, and Mesh details
+    local function cleanDescendant(d)
+        pcall(function()
+            if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+                d.Enabled = false
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                d.Transparency = 1
+            elseif d:IsA("BasePart") and not (d.Parent and d.Parent:FindFirstChildOfClass("Humanoid")) then
+                d.Material = Enum.Material.SmoothPlastic
+                d.Reflectance = 0
+                d.CastShadow = false
+            end
+        end)
+    end
+
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        cleanDescendant(d)
+    end
+
+    Workspace.DescendantAdded:Connect(function(d)
+        task.wait(0.1)
+        if d and d.Parent then
+            cleanDescendant(d)
+        end
+    end)
+
+    -- 4. Rendering Quality Level Level01
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+    end)
+
+    -- 5. Apply initial 3D rendering state
+    set3dRendering(not WhiteScreenEnabled)
+    print("[AltShit] 🚀 Ultimate FPS Boost & Graphics Optimizer applied!")
+end
+
+applyUltimateFpsBoost()
+
+-- ========================================================================
+--  [8] BACKGROUND AUTOMATION THREADS
 -- ========================================================================
 
 -- Thread A: Lobby Join Spammer & Dungeon Host Watcher
@@ -398,7 +488,7 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  [8] GRAPHICAL USER INTERFACE
+--  [9] GRAPHICAL USER INTERFACE & WHITE SCREEN DASHBOARD
 -- ========================================================================
 local parent = getGuiParent()
 local existingGui = parent:FindFirstChild("AltShitWitchyOysterGui")
@@ -410,14 +500,196 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parent
 
-local MainFrame = Instance.new("Frame")
+-- Helper: Event debouncer
+local function bindClick(btn, callback)
+    btn.Active = true
+    local lastClick = 0
+    local function debounced(...)
+        local now = os.clock()
+        if now - lastClick < 0.25 then return end
+        lastClick = now
+        callback(...)
+    end
+    btn.MouseButton1Click:Connect(debounced)
+    pcall(function()
+        if btn.Activated then btn.Activated:Connect(debounced) end
+    end)
+end
+
+-- Forward Declarations
+local toggleWhiteScreen
+local MainFrame
+local FloatingBadge
+local isMin = false
+
+-- ------------------------------------------------------------------------
+--  A. FULLSCREEN WHITE SCREEN OVERLAY (ZERO GPU CONSUMPTION)
+-- ------------------------------------------------------------------------
+local WhiteScreenFrame = Instance.new("Frame")
+WhiteScreenFrame.Name = "WhiteScreenFrame"
+WhiteScreenFrame.Size = UDim2.new(1, 0, 1, 0)
+WhiteScreenFrame.Position = UDim2.new(0, 0, 0, 0)
+WhiteScreenFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+WhiteScreenFrame.BorderSizePixel = 0
+WhiteScreenFrame.ZIndex = 50
+WhiteScreenFrame.Visible = WhiteScreenEnabled
+WhiteScreenFrame.Parent = ScreenGui
+
+-- Center Card on White Screen
+local WSCard = Instance.new("Frame")
+WSCard.Name = "WSCard"
+WSCard.AnchorPoint = Vector2.new(0.5, 0.5)
+WSCard.Size = UDim2.new(0, 360, 0, 240)
+WSCard.Position = UDim2.new(0.5, 0, 0.5, 0)
+WSCard.BackgroundColor3 = Color3.fromRGB(244, 246, 252)
+WSCard.BorderSizePixel = 0
+WSCard.ZIndex = 51
+WSCard.Parent = WhiteScreenFrame
+
+local WSCorner = Instance.new("UICorner")
+WSCorner.CornerRadius = UDim.new(0, 12)
+WSCorner.Parent = WSCard
+
+local WSStroke = Instance.new("UIStroke")
+WSStroke.Color = Color3.fromRGB(200, 210, 230)
+WSStroke.Thickness = 1.5
+WSStroke.Parent = WSCard
+
+local WSTitle = Instance.new("TextLabel")
+WSTitle.Size = UDim2.new(1, -24, 0, 24)
+WSTitle.Position = UDim2.new(0, 12, 0, 12)
+WSTitle.BackgroundTransparency = 1
+WSTitle.Text = "⚡ ALTSHIT: WITCHYOYSTER"
+WSTitle.TextColor3 = Color3.fromRGB(45, 35, 70)
+WSTitle.TextSize = 14
+WSTitle.Font = Enum.Font.GothamBold
+WSTitle.TextXAlignment = Enum.TextXAlignment.Center
+WSTitle.ZIndex = 52
+WSTitle.Parent = WSCard
+
+local WSSubtitle = Instance.new("TextLabel")
+WSSubtitle.Size = UDim2.new(1, -24, 0, 16)
+WSSubtitle.Position = UDim2.new(0, 12, 0, 36)
+WSSubtitle.BackgroundTransparency = 1
+WSSubtitle.Text = "🖥️ WHITE SCREEN & ULTIMATE FPS BOOST ACTIVE"
+WSSubtitle.TextColor3 = Color3.fromRGB(60, 140, 90)
+WSSubtitle.TextSize = 10
+WSSubtitle.Font = Enum.Font.GothamBold
+WSSubtitle.TextXAlignment = Enum.TextXAlignment.Center
+WSSubtitle.ZIndex = 52
+WSSubtitle.Parent = WSCard
+
+local WS_StatusLbl = Instance.new("TextLabel")
+WS_StatusLbl.Size = UDim2.new(1, -24, 0, 20)
+WS_StatusLbl.Position = UDim2.new(0, 12, 0, 60)
+WS_StatusLbl.BackgroundTransparency = 1
+WS_StatusLbl.Text = "Status: Initializing..."
+WS_StatusLbl.TextColor3 = Color3.fromRGB(50, 60, 85)
+WS_StatusLbl.TextSize = 11
+WS_StatusLbl.Font = Enum.Font.GothamBold
+WS_StatusLbl.TextXAlignment = Enum.TextXAlignment.Center
+WS_StatusLbl.ZIndex = 52
+WS_StatusLbl.Parent = WSCard
+
+local WS_HostLbl = Instance.new("TextLabel")
+WS_HostLbl.Size = UDim2.new(1, -24, 0, 18)
+WS_HostLbl.Position = UDim2.new(0, 12, 0, 82)
+WS_HostLbl.BackgroundTransparency = 1
+WS_HostLbl.Text = "Host: WitchyOyster (Searching...)"
+WS_HostLbl.TextColor3 = Color3.fromRGB(100, 110, 135)
+WS_HostLbl.TextSize = 10
+WS_HostLbl.Font = Enum.Font.GothamMedium
+WS_HostLbl.TextXAlignment = Enum.TextXAlignment.Center
+WS_HostLbl.ZIndex = 52
+WS_HostLbl.Parent = WSCard
+
+local WS_MetricsLbl = Instance.new("TextLabel")
+WS_MetricsLbl.Size = UDim2.new(1, -24, 0, 18)
+WS_MetricsLbl.Position = UDim2.new(0, 12, 0, 102)
+WS_MetricsLbl.BackgroundTransparency = 1
+WS_MetricsLbl.Text = "Anti-Bot: Moves: 0 | Casts: 0 | 15 FPS Cap"
+WS_MetricsLbl.TextColor3 = Color3.fromRGB(70, 110, 170)
+WS_MetricsLbl.TextSize = 10
+WS_MetricsLbl.Font = Enum.Font.GothamMedium
+WS_MetricsLbl.TextXAlignment = Enum.TextXAlignment.Center
+WS_MetricsLbl.ZIndex = 52
+WS_MetricsLbl.Parent = WSCard
+
+-- White Screen Toggle 3D View Button
+local WS_ToggleViewBtn = Instance.new("TextButton")
+WS_ToggleViewBtn.Size = UDim2.new(1, -32, 0, 34)
+WS_ToggleViewBtn.Position = UDim2.new(0, 16, 0, 128)
+WS_ToggleViewBtn.BackgroundColor3 = Color3.fromRGB(55, 45, 80)
+WS_ToggleViewBtn.BorderSizePixel = 0
+WS_ToggleViewBtn.Text = "👁️ Show 3D World (Press F8)"
+WS_ToggleViewBtn.TextColor3 = Color3.fromRGB(245, 240, 255)
+WS_ToggleViewBtn.TextSize = 12
+WS_ToggleViewBtn.Font = Enum.Font.GothamBold
+WS_ToggleViewBtn.ZIndex = 53
+WS_ToggleViewBtn.Parent = WSCard
+
+local WS_ToggleCorner = Instance.new("UICorner")
+WS_ToggleCorner.CornerRadius = UDim.new(0, 8)
+WS_ToggleCorner.Parent = WS_ToggleViewBtn
+
+-- White Screen Auxiliary Control Buttons
+local WS_ToggleAutoBtn = Instance.new("TextButton")
+WS_ToggleAutoBtn.Size = UDim2.new(0.55, -20, 0, 30)
+WS_ToggleAutoBtn.Position = UDim2.new(0, 16, 0, 170)
+WS_ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(40, 130, 80)
+WS_ToggleAutoBtn.BorderSizePixel = 0
+WS_ToggleAutoBtn.Text = "⚡ ACTIVE"
+WS_ToggleAutoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+WS_ToggleAutoBtn.TextSize = 11
+WS_ToggleAutoBtn.Font = Enum.Font.GothamBold
+WS_ToggleAutoBtn.ZIndex = 53
+WS_ToggleAutoBtn.Parent = WSCard
+
+local WS_AutoCorner = Instance.new("UICorner")
+WS_AutoCorner.CornerRadius = UDim.new(0, 6)
+WS_AutoCorner.Parent = WS_ToggleAutoBtn
+
+local WS_ForceLobbyBtn = Instance.new("TextButton")
+WS_ForceLobbyBtn.Size = UDim2.new(0.45, -20, 0, 30)
+WS_ForceLobbyBtn.Position = UDim2.new(0.55, 4, 0, 170)
+WS_ForceLobbyBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 65)
+WS_ForceLobbyBtn.BorderSizePixel = 0
+WS_ForceLobbyBtn.Text = "🚪 To Lobby"
+WS_ForceLobbyBtn.TextColor3 = Color3.fromRGB(255, 240, 245)
+WS_ForceLobbyBtn.TextSize = 10
+WS_ForceLobbyBtn.Font = Enum.Font.GothamBold
+WS_ForceLobbyBtn.ZIndex = 53
+WS_ForceLobbyBtn.Parent = WSCard
+
+local WS_LobbyCorner = Instance.new("UICorner")
+WS_LobbyCorner.CornerRadius = UDim.new(0, 6)
+WS_LobbyCorner.Parent = WS_ForceLobbyBtn
+
+local WS_Hint = Instance.new("TextLabel")
+WS_Hint.Size = UDim2.new(1, -24, 0, 16)
+WS_Hint.Position = UDim2.new(0, 12, 0, 210)
+WS_Hint.BackgroundTransparency = 1
+WS_Hint.Text = "GPU & 3D Rendering Paused • Press F8 anytime to toggle"
+WS_Hint.TextColor3 = Color3.fromRGB(140, 150, 175)
+WS_Hint.TextSize = 9
+WS_Hint.Font = Enum.Font.Gotham
+WS_Hint.TextXAlignment = Enum.TextXAlignment.Center
+WS_Hint.ZIndex = 52
+WS_Hint.Parent = WSCard
+
+-- ------------------------------------------------------------------------
+--  B. COMPACT 3D WORLD HUD (WHEN WHITE SCREEN IS OFF)
+-- ------------------------------------------------------------------------
+MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 310, 0, 250)
-MainFrame.Position = UDim2.new(1, -330, 0, 120)
+MainFrame.Size = UDim2.new(0, 310, 0, 285)
+MainFrame.Position = UDim2.new(1, -330, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 28)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.ClipsDescendants = true
+MainFrame.ZIndex = 60
+MainFrame.Visible = not WhiteScreenEnabled
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
@@ -435,7 +707,7 @@ TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 34)
 TitleBar.BackgroundColor3 = Color3.fromRGB(28, 24, 40)
 TitleBar.BorderSizePixel = 0
-TitleBar.ZIndex = 10
+TitleBar.ZIndex = 61
 TitleBar.Active = true
 TitleBar.Parent = MainFrame
 
@@ -453,7 +725,7 @@ TitleLabel.TextColor3 = Color3.fromRGB(230, 215, 255)
 TitleLabel.TextSize = 12
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.ZIndex = 11
+TitleLabel.ZIndex = 62
 TitleLabel.Parent = TitleBar
 
 local MinBtn = Instance.new("TextButton")
@@ -466,7 +738,7 @@ MinBtn.Text = "—"
 MinBtn.TextColor3 = Color3.fromRGB(200, 190, 230)
 MinBtn.TextSize = 12
 MinBtn.Font = Enum.Font.GothamBold
-MinBtn.ZIndex = 20
+MinBtn.ZIndex = 63
 MinBtn.Active = true
 MinBtn.Parent = TitleBar
 
@@ -484,7 +756,7 @@ CloseBtn.Text = "✕"
 CloseBtn.TextColor3 = Color3.fromRGB(255, 120, 130)
 CloseBtn.TextSize = 11
 CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.ZIndex = 20
+CloseBtn.ZIndex = 63
 CloseBtn.Active = true
 CloseBtn.Parent = TitleBar
 
@@ -532,6 +804,7 @@ local Content = Instance.new("Frame")
 Content.Size = UDim2.new(1, -16, 1, -42)
 Content.Position = UDim2.new(0, 8, 0, 38)
 Content.BackgroundTransparency = 1
+Content.ZIndex = 61
 Content.Parent = MainFrame
 
 -- [1] Host Config Card
@@ -539,6 +812,7 @@ local HostCard = Instance.new("Frame")
 HostCard.Size = UDim2.new(1, 0, 0, 50)
 HostCard.BackgroundColor3 = Color3.fromRGB(27, 24, 38)
 HostCard.BorderSizePixel = 0
+HostCard.ZIndex = 61
 HostCard.Parent = Content
 
 local HostCorner = Instance.new("UICorner")
@@ -554,6 +828,7 @@ HostHeader.TextColor3 = Color3.fromRGB(160, 145, 190)
 HostHeader.TextSize = 10
 HostHeader.Font = Enum.Font.GothamBold
 HostHeader.TextXAlignment = Enum.TextXAlignment.Left
+HostHeader.ZIndex = 62
 HostHeader.Parent = HostCard
 
 local HostBox = Instance.new("TextBox")
@@ -566,6 +841,7 @@ HostBox.TextColor3 = Color3.fromRGB(255, 230, 160)
 HostBox.TextSize = 11
 HostBox.Font = Enum.Font.GothamBold
 HostBox.ClearTextOnFocus = false
+HostBox.ZIndex = 62
 HostBox.Parent = HostCard
 
 local HostBoxCorner = Instance.new("UICorner")
@@ -586,6 +862,7 @@ StatusCard.Size = UDim2.new(1, 0, 0, 84)
 StatusCard.Position = UDim2.new(0, 0, 0, 56)
 StatusCard.BackgroundColor3 = Color3.fromRGB(27, 24, 38)
 StatusCard.BorderSizePixel = 0
+StatusCard.ZIndex = 61
 StatusCard.Parent = Content
 
 local StatusCorner = Instance.new("UICorner")
@@ -602,6 +879,7 @@ StatusLbl.TextSize = 11
 StatusLbl.Font = Enum.Font.GothamBold
 StatusLbl.TextXAlignment = Enum.TextXAlignment.Left
 StatusLbl.TextWrapped = true
+StatusLbl.ZIndex = 62
 StatusLbl.Parent = StatusCard
 
 local HostStatusLbl = Instance.new("TextLabel")
@@ -613,6 +891,7 @@ HostStatusLbl.TextColor3 = Color3.fromRGB(180, 170, 210)
 HostStatusLbl.TextSize = 10
 HostStatusLbl.Font = Enum.Font.GothamMedium
 HostStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+HostStatusLbl.ZIndex = 62
 HostStatusLbl.Parent = StatusCard
 
 local MetricsLbl = Instance.new("TextLabel")
@@ -624,6 +903,7 @@ MetricsLbl.TextColor3 = Color3.fromRGB(150, 230, 180)
 MetricsLbl.TextSize = 10
 MetricsLbl.Font = Enum.Font.GothamMedium
 MetricsLbl.TextXAlignment = Enum.TextXAlignment.Left
+MetricsLbl.ZIndex = 62
 MetricsLbl.Parent = StatusCard
 
 -- [3] Action Controls
@@ -636,6 +916,7 @@ ToggleBtn.Text = "⚡ ACTIVE"
 ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 ToggleBtn.TextSize = 11
 ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.ZIndex = 62
 ToggleBtn.Parent = Content
 
 local ToggleCorner = Instance.new("UICorner")
@@ -651,56 +932,37 @@ ForceLobbyBtn.Text = "🚪 To Lobby"
 ForceLobbyBtn.TextColor3 = Color3.fromRGB(255, 180, 190)
 ForceLobbyBtn.TextSize = 10
 ForceLobbyBtn.Font = Enum.Font.GothamBold
+ForceLobbyBtn.ZIndex = 62
 ForceLobbyBtn.Parent = Content
 
 local ForceCorner = Instance.new("UICorner")
 ForceCorner.CornerRadius = UDim.new(0, 6)
 ForceCorner.Parent = ForceLobbyBtn
 
--- Helper: Event debouncer
-local function bindClick(btn, callback)
-    btn.Active = true
-    local lastClick = 0
-    local function debounced(...)
-        local now = os.clock()
-        if now - lastClick < 0.25 then return end
-        lastClick = now
-        callback(...)
-    end
-    btn.MouseButton1Click:Connect(debounced)
-    pcall(function()
-        if btn.Activated then btn.Activated:Connect(debounced) end
-    end)
-end
+-- [4] Dedicated White Screen Toggle in HUD
+local WhiteScreenToggleBtn = Instance.new("TextButton")
+WhiteScreenToggleBtn.Size = UDim2.new(1, 0, 0, 30)
+WhiteScreenToggleBtn.Position = UDim2.new(0, 0, 0, 182)
+WhiteScreenToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 42, 70)
+WhiteScreenToggleBtn.BorderSizePixel = 0
+WhiteScreenToggleBtn.Text = "🖥️ Enable White Screen (F8)"
+WhiteScreenToggleBtn.TextColor3 = Color3.fromRGB(220, 210, 250)
+WhiteScreenToggleBtn.TextSize = 11
+WhiteScreenToggleBtn.Font = Enum.Font.GothamBold
+WhiteScreenToggleBtn.ZIndex = 62
+WhiteScreenToggleBtn.Parent = Content
 
-bindClick(ToggleBtn, function()
-    AutomationEnabled = not AutomationEnabled
-    ToggleBtn.BackgroundColor3 = AutomationEnabled and Color3.fromRGB(40, 130, 80) or Color3.fromRGB(70, 70, 85)
-    ToggleBtn.Text = AutomationEnabled and "⚡ ACTIVE" or "⏸️ PAUSED"
-end)
+local WSToggleBtnCorner = Instance.new("UICorner")
+WSToggleBtnCorner.CornerRadius = UDim.new(0, 6)
+WSToggleBtnCorner.Parent = WhiteScreenToggleBtn
 
-bindClick(ForceLobbyBtn, function()
-    returnToLobby()
-end)
+local WSToggleBtnStroke = Instance.new("UIStroke")
+WSToggleBtnStroke.Color = Color3.fromRGB(90, 75, 125)
+WSToggleBtnStroke.Thickness = 1
+WSToggleBtnStroke.Parent = WhiteScreenToggleBtn
 
--- Minimize & Floating Badge
-local isMin = false
-bindClick(MinBtn, function()
-    isMin = not isMin
-    if isMin then
-        MainFrame.Size = UDim2.new(0, 310, 0, 34)
-        Content.Visible = false
-        MinBtn.Text = "+"
-        MinBtn.TextColor3 = Color3.fromRGB(150, 255, 170)
-    else
-        MainFrame.Size = UDim2.new(0, 310, 0, 250)
-        Content.Visible = true
-        MinBtn.Text = "—"
-        MinBtn.TextColor3 = Color3.fromRGB(200, 190, 230)
-    end
-end)
-
-local FloatingBadge = Instance.new("TextButton")
+-- Floating Badge
+FloatingBadge = Instance.new("TextButton")
 FloatingBadge.Name = "FloatingBadge"
 FloatingBadge.Size = UDim2.new(0, 36, 0, 36)
 FloatingBadge.Position = UDim2.new(1, -48, 0, 120)
@@ -710,7 +972,7 @@ FloatingBadge.Text = "⚡"
 FloatingBadge.TextSize = 18
 FloatingBadge.Visible = false
 FloatingBadge.Active = true
-FloatingBadge.ZIndex = 100
+FloatingBadge.ZIndex = 70
 FloatingBadge.Parent = ScreenGui
 
 local BadgeCorner = Instance.new("UICorner")
@@ -722,6 +984,89 @@ BadgeStroke.Color = Color3.fromRGB(130, 90, 200)
 BadgeStroke.Thickness = 1.5
 BadgeStroke.Parent = FloatingBadge
 
+-- ------------------------------------------------------------------------
+--  C. TOGGLE CONTROLLER & EVENT BINDINGS
+-- ------------------------------------------------------------------------
+toggleWhiteScreen = function(state)
+    if state ~= nil then
+        WhiteScreenEnabled = state
+    else
+        WhiteScreenEnabled = not WhiteScreenEnabled
+    end
+
+    WhiteScreenFrame.Visible = WhiteScreenEnabled
+    set3dRendering(not WhiteScreenEnabled)
+
+    if WhiteScreenEnabled then
+        MainFrame.Visible = false
+        FloatingBadge.Visible = false
+    else
+        MainFrame.Visible = not isMin
+        FloatingBadge.Visible = isMin
+    end
+
+    print(string.format("[AltShit] 🖥️ White Screen & Ultimate FPS Boost: %s", 
+        WhiteScreenEnabled and "ENABLED (3D Rendering OFF, 15 FPS)" or "DISABLED (3D Rendering ON, 60 FPS)"))
+end
+
+-- Hotkey F8 Binding
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == Enum.KeyCode.F8 then
+        toggleWhiteScreen()
+    end
+end)
+
+-- Button Bindings
+bindClick(WS_ToggleViewBtn, function()
+    toggleWhiteScreen(false)
+end)
+
+bindClick(WhiteScreenToggleBtn, function()
+    toggleWhiteScreen(true)
+end)
+
+local function updateAutomationState()
+    ToggleBtn.BackgroundColor3 = AutomationEnabled and Color3.fromRGB(40, 130, 80) or Color3.fromRGB(70, 70, 85)
+    ToggleBtn.Text = AutomationEnabled and "⚡ ACTIVE" or "⏸️ PAUSED"
+
+    WS_ToggleAutoBtn.BackgroundColor3 = AutomationEnabled and Color3.fromRGB(40, 130, 80) or Color3.fromRGB(85, 85, 95)
+    WS_ToggleAutoBtn.Text = AutomationEnabled and "⚡ ACTIVE" or "⏸️ PAUSED"
+end
+
+bindClick(ToggleBtn, function()
+    AutomationEnabled = not AutomationEnabled
+    updateAutomationState()
+end)
+
+bindClick(WS_ToggleAutoBtn, function()
+    AutomationEnabled = not AutomationEnabled
+    updateAutomationState()
+end)
+
+bindClick(ForceLobbyBtn, function()
+    returnToLobby()
+end)
+
+bindClick(WS_ForceLobbyBtn, function()
+    returnToLobby()
+end)
+
+-- Minimize & Floating Badge
+bindClick(MinBtn, function()
+    isMin = not isMin
+    if isMin then
+        MainFrame.Size = UDim2.new(0, 310, 0, 34)
+        Content.Visible = false
+        MinBtn.Text = "+"
+        MinBtn.TextColor3 = Color3.fromRGB(150, 255, 170)
+    else
+        MainFrame.Size = UDim2.new(0, 310, 0, 285)
+        Content.Visible = true
+        MinBtn.Text = "—"
+        MinBtn.TextColor3 = Color3.fromRGB(200, 190, 230)
+    end
+end)
+
 bindClick(CloseBtn, function()
     MainFrame.Visible = false
     FloatingBadge.Visible = true
@@ -732,37 +1077,55 @@ bindClick(FloatingBadge, function()
     FloatingBadge.Visible = false
 end)
 
--- GUI Live Monitor Loop
+-- ------------------------------------------------------------------------
+--  D. GUI LIVE MONITOR LOOP
+-- ------------------------------------------------------------------------
 task.spawn(function()
     while _G.ALTSHIT_WITCHYOYSTER_RUNNING and ScreenGui and ScreenGui.Parent do
         local hostPlr = getHostPlayer()
-        if hostPlr then
-            HostStatusLbl.Text = string.format("Host: %s (Online ✅)", hostPlr.Name)
-            HostStatusLbl.TextColor3 = Color3.fromRGB(140, 255, 170)
-        else
-            HostStatusLbl.Text = string.format("Host: %s (Not in Server ❌)", TARGET_HOST)
-            HostStatusLbl.TextColor3 = Color3.fromRGB(255, 140, 140)
-        end
+        local hostText = hostPlr and string.format("Host: %s (Online ✅)", hostPlr.Name) or string.format("Host: %s (Not in Server ❌)", TARGET_HOST)
+        local hostColor = hostPlr and Color3.fromRGB(140, 255, 170) or Color3.fromRGB(255, 140, 140)
+        local wsHostColor = hostPlr and Color3.fromRGB(40, 140, 70) or Color3.fromRGB(200, 50, 60)
 
-        MetricsLbl.Text = string.format("Anti-Bot: Moves: %d | Casts: %d", totalMoves, totalCasts)
+        HostStatusLbl.Text = hostText
+        HostStatusLbl.TextColor3 = hostColor
+        WS_HostLbl.Text = hostText
+        WS_HostLbl.TextColor3 = wsHostColor
+
+        local metricsText = string.format("Anti-Bot: Moves: %d | Casts: %d", totalMoves, totalCasts)
+        MetricsLbl.Text = metricsText
+        WS_MetricsLbl.Text = string.format("Anti-Bot: Moves: %d | Casts: %d | %d FPS Cap", totalMoves, totalCasts, WhiteScreenEnabled and LowFpsCap or NormalFpsCap)
+
+        local statusText = ""
+        local statusColor = Color3.fromRGB(220, 210, 245)
+        local wsStatusColor = Color3.fromRGB(50, 60, 85)
 
         if not AutomationEnabled then
-            StatusLbl.Text = "Status: ⏸️ Automation Paused"
-            StatusLbl.TextColor3 = Color3.fromRGB(240, 200, 100)
+            statusText = "Status: ⏸️ Automation Paused"
+            statusColor = Color3.fromRGB(240, 200, 100)
+            wsStatusColor = Color3.fromRGB(180, 130, 20)
         elseif isReturningToLobby then
-            StatusLbl.Text = "Status: 🚪 Host Left! Returning to Lobby..."
-            StatusLbl.TextColor3 = Color3.fromRGB(255, 120, 130)
+            statusText = "Status: 🚪 Host Left! Returning to Lobby..."
+            statusColor = Color3.fromRGB(255, 120, 130)
+            wsStatusColor = Color3.fromRGB(210, 40, 50)
         elseif isMainLobby() then
-            StatusLbl.Text = "Status: 🏰 Lobby: Auto-Spamming Join..."
-            StatusLbl.TextColor3 = Color3.fromRGB(100, 210, 255)
+            statusText = "Status: 🏰 Lobby: Auto-Spamming Join..."
+            statusColor = Color3.fromRGB(100, 210, 255)
+            wsStatusColor = Color3.fromRGB(30, 110, 190)
         else
-            StatusLbl.Text = "Status: ⚔️ Dungeon: Anti-Bot Active"
-            StatusLbl.TextColor3 = Color3.fromRGB(160, 245, 180)
+            statusText = "Status: ⚔️ Dungeon: Anti-Bot Active"
+            statusColor = Color3.fromRGB(160, 245, 180)
+            wsStatusColor = Color3.fromRGB(35, 135, 60)
         end
+
+        StatusLbl.Text = statusText
+        StatusLbl.TextColor3 = statusColor
+        WS_StatusLbl.Text = statusText
+        WS_StatusLbl.TextColor3 = wsStatusColor
 
         task.wait(0.5)
     end
 end)
 
-print(string.format("[ALTSHIT WITCHYOYSTER v1.0] Running on %s. Target Host: %s. Lobby join & Anti-bot active!", 
-    LocalPlayer.Name, TARGET_HOST))
+print(string.format("[ALTSHIT WITCHYOYSTER v2.0] Running on %s. White Screen & Ultimate FPS Boost active!", 
+    LocalPlayer.Name))
