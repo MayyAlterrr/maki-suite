@@ -29,11 +29,15 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 -- Prevent duplicate instances
-if _G.MAKI_FULLY_AUTOMATED_RUNNING then
-    _G.MAKI_FULLY_AUTOMATED_RUNNING = false
-    task.wait(0.25)
-end
+_G.MAKI_FULLY_AUTOMATED_RUNNING = false
+_G.MAKI_INSTANCE_ID = (_G.MAKI_INSTANCE_ID or 0) + 1
+local myInstanceId = _G.MAKI_INSTANCE_ID
+task.wait(0.2)
 _G.MAKI_FULLY_AUTOMATED_RUNNING = true
+
+local function isCurrentInstance()
+    return _G.MAKI_FULLY_AUTOMATED_RUNNING and (_G.MAKI_INSTANCE_ID == myInstanceId)
+end
 
 local getGuiParent = function()
     if typeof(gethui) == "function" then
@@ -387,7 +391,7 @@ end
 -- 20-Second Loading Screen Watchdog
 local stuckLoadingSeconds = 0
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(1.0)
         if isClientStuckInLoading() then
             stuckLoadingSeconds = stuckLoadingSeconds + 1
@@ -532,10 +536,10 @@ end
 --  Priority Order: 1. 2xGold -> 2. +1 Drops -> 3. VIP -> 4. Stat Reset
 -- ========================================================================
 local TargetGamepassOrder = {
-    { id = "2xGold",    name = "2x Gold" },
-    { id = "extraDrop", name = "+1 Drops" },
-    { id = "VIP",       name = "VIP" },
-    { id = "freeReset", name = "Stat Reset" },
+    { id = "goldGamepass",      name = "2x Gold",           displayName = "x2 Gold" },
+    { id = "extraItemGamepass",  name = "+1 Drops",          displayName = "+1 Item" },
+    { id = "vip",               name = "VIP",               displayName = "VIP" },
+    { id = "freeStatResets",    name = "Stat Reset",        displayName = "Free Resets" },
 }
 
 local ownedGamepassesCache = {}
@@ -556,7 +560,7 @@ end
 local function isGamepassOwned(passId)
     if ownedGamepassesCache[passId] then return true end
 
-    -- Check direct values in LocalPlayer
+    -- 1. Check direct bool value in LocalPlayer
     local pVal = LocalPlayer:FindFirstChild(passId)
     if pVal and (pVal:IsA("BoolValue") and pVal.Value == true) then
         ownedGamepassesCache[passId] = true
@@ -572,7 +576,16 @@ local function isGamepassOwned(passId)
         end
     end
 
-    -- Check Shop UI in PlayerGui
+    -- 2. Check remote directly from game server
+    if getGoldGamepassPriceRemote then
+        local ok, res = pcall(function() return getGoldGamepassPriceRemote:InvokeServer(passId) end)
+        if ok and type(res) == "table" and res.owned == true then
+            ownedGamepassesCache[passId] = true
+            return true
+        end
+    end
+
+    -- 3. Check Shop UI in PlayerGui
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
         local shop = pG:FindFirstChild("mainInterface") and pG.mainInterface:FindFirstChild("shop")
@@ -585,12 +598,6 @@ local function isGamepassOwned(passId)
                     ownedGamepassesCache[passId] = true
                     return true
                 end
-                for _, d in ipairs(item:GetDescendants()) do
-                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text and d.Text:upper():find("OWNED") and d.Visible then
-                        ownedGamepassesCache[passId] = true
-                        return true
-                    end
-                end
             end
         end
     end
@@ -598,11 +605,12 @@ local function isGamepassOwned(passId)
     return false
 end
 
--- Server purchase result listener
+-- Server purchase result listener (receives table: { success = bool, gamepassKey = string, message = string })
 if goldGamepassPurchaseResultRemote then
-    goldGamepassPurchaseResultRemote.OnClientEvent:Connect(function(passId, success, ...)
+    goldGamepassPurchaseResultRemote.OnClientEvent:Connect(function(res)
+        local success = (type(res) == "table" and res.success) or (res == true)
+        local pStr = (type(res) == "table" and res.gamepassKey) or tostring(res)
         if success then
-            local pStr = tostring(passId)
             ownedGamepassesCache[pStr] = true
             print(string.format("[%s] 🎉 Server Confirmed Purchase of Gamepass: %s!", LocalPlayer.Name, pStr))
             sendMilestoneNotification("🛒 Gamepass Purchased with Gold!", string.format("**%s** server-confirmed purchase of **%s**!", LocalPlayer.Name, pStr), 65280)
@@ -610,7 +618,7 @@ if goldGamepassPurchaseResultRemote then
     end)
 end
 
--- Sequential Gamepass Buyer (Exact Priority: 2x Gold -> +1 Drops -> VIP -> Stat Reset)
+-- Sequential Gamepass Buyer (Exact Priority: 1. 2x Gold -> 2. +1 Drops -> 3. VIP -> 4. Stat Reset)
 local isBuyingPasses = false
 local function executeSequentialGamepassBuyer()
     if isBuyingPasses or not Config.AutoBuyGamepasses or not requestGoldGamepassPurchaseRemote then return end
@@ -623,28 +631,36 @@ local function executeSequentialGamepassBuyer()
             if not isGamepassOwned(pass.id) then
                 local price = nil
                 if getGoldGamepassPriceRemote then
-                    local ok, p = pcall(function() return getGoldGamepassPriceRemote:InvokeServer(pass.id) end)
-                    if ok and tonumber(p) then price = tonumber(p) end
+                    local ok, res = pcall(function() return getGoldGamepassPriceRemote:InvokeServer(pass.id) end)
+                    if ok and type(res) == "table" then
+                        if res.owned == true then
+                            ownedGamepassesCache[pass.id] = true
+                        elseif tonumber(res.cost) then
+                            price = tonumber(res.cost)
+                        end
+                    end
                 end
 
-                if not price or myGold >= price then
+                if isGamepassOwned(pass.id) then
+                    -- Already owned, continue to next pass in sequence
+                elseif price and myGold >= price then
                     print(string.format("[%s] 🛒 Auto-Buying Gamepass (#%s): %s (Price: %s, Current Gold: %s)...",
-                        LocalPlayer.Name, pass.id, pass.name, tostring(price or "Unknown"), tostring(myGold)))
+                        LocalPlayer.Name, pass.id, pass.name, tostring(price), tostring(myGold)))
                     pcall(function()
                         requestGoldGamepassPurchaseRemote:FireServer(pass.id)
                     end)
-                    task.wait(1.0)
+                    task.wait(1.5)
 
                     if isGamepassOwned(pass.id) then
                         print(string.format("[%s] 🎉 Successfully acquired %s gamepass!", LocalPlayer.Name, pass.name))
-                        sendMilestoneNotification("🛒 Gamepass Purchased with Gold!", string.format("**%s** bought **%s** (%s) for **%s** gold!", LocalPlayer.Name, pass.name, pass.id, tostring(price or "N/A")), 33023)
+                        sendMilestoneNotification("🛒 Gamepass Purchased with Gold!", string.format("**%s** bought **%s** (%s) for **%s** gold!", LocalPlayer.Name, pass.name, pass.id, tostring(price)), 33023)
                         myGold = getAccountGold()
                     else
-                        -- Stop here so we preserve the strict priority order
+                        -- Stop here so we strictly preserve priority order (never skip a pass)
                         break
                     end
                 else
-                    -- Not enough gold for current priority pass; hold here until gold is earned
+                    -- Not enough gold for this priority pass; hold position until gold is accumulated
                     break
                 end
             end
@@ -672,28 +688,28 @@ local function shouldSellItem(category, itemKey, item)
     -- 2. SPECIAL EVENT ITEMS: 100% NEVER SELL
     if isSpecialEventItem(name) then return false, "SPECIAL_EVENT" end
 
-    -- 3. HIGH-TIER PURPLE COLLECTS (Eldenbark, Valhalla): 100% NEVER SELL
+    -- 3. BOSS RAID DROPS (Tiers 1 through 30):
+    -- Identification rule: Items have "+[tier]" in their name (e.g. "+21", "+30", "Nature Spellblade +21") or are Level 130
+    local isBossRaidTier = name:match("%+%s*%d+") ~= nil
+    local isBossRaidReq = (itemLvl == 130)
+    local isBossRaidKeyword = nameLower:find("boss raid") or nameLower:find("raid drop")
+    if isBossRaidTier or isBossRaidReq or isBossRaidKeyword then
+        -- SELL ALL unequipped boss raid items (weapons, abilities, armors) of ANY rarity!
+        return true, "BOSS_RAID_JUNK"
+    end
+
+    -- 4. HIGH-TIER PURPLE COLLECTS (Eldenbark, Valhalla): 100% NEVER SELL
     local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(name)
     if isCollect and isHighTier then return false, "HIGH_TIER_COLLECT" end
 
-    -- 4. PURPLE COLLECT ARMOR (Chests & Helmets from standard dungeons): 100% NEVER SELL
+    -- 5. PURPLE COLLECT ARMOR (Chests & Helmets from standard progression dungeons): 100% NEVER SELL
     if (category == "chest" or category == "helmet") and isCollect then
         return false, "PURPLE_COLLECT_ARMOR"
     end
 
-    -- 5. ENDGAME GEAR (Level 145+ Legendary, Mythic, Ultimate from Orbital, Volcanic, Aquatic, EF, NL): 100% NEVER SELL
+    -- 6. ENDGAME GEAR (Level 145+ Legendary, Mythic, Ultimate from Orbital, Volcanic, Aquatic, EF, NL): 100% NEVER SELL
     if itemLvl >= 145 and (rarityLower == "legendary" or rarityLower == "ultimate" or rarityLower == "mythic") then
         return false, "ENDGAME_LEGENDARY"
-    end
-
-    -- 6. BOSS RAID DROPS:
-    -- Identification rule: Items have "+[tier]" in their name (e.g. "+21", "+30", "Nature Spellblade +29") or are Level 130
-    local isBossRaidTier = name:match("%+%s*%d+") ~= nil
-    local isBossRaidKeyword = nameLower:find("raid") or nameLower:find("boss raid") or nameLower:find("tier")
-
-    if isBossRaidTier or isBossRaidKeyword or itemLvl == 130 then
-        -- SELL ALL unequipped boss raid items (weapons, abilities, armors) of ANY rarity!
-        return true, "BOSS_RAID_JUNK"
     end
 
     -- 7. PROGRESSION TRASH (Any unequipped item below Level 145 not protected above):
@@ -709,8 +725,9 @@ local function shouldSellItem(category, itemKey, item)
     return false, "SAFETY_KEEP"
 end
 
-local function executeUniversalAutoSell()
-    if not Config.AutoSellTrashes or not reloadInvyRemote or not sellItemEventRemote then return 0 end
+local function executeUniversalAutoSell(isManualForce)
+    if not isManualForce and not Config.AutoSellTrashes then return 0 end
+    if not reloadInvyRemote or not sellItemEventRemote then return 0 end
 
     -- 1. Refresh inventory cache
     local ok, inv = pcall(function() return reloadInvyRemote:InvokeServer() end)
@@ -726,7 +743,9 @@ local function executeUniversalAutoSell()
             if canSell then
                 local idNum = tonumber(string.match(tostring(k), "%d+"))
                 if idNum then
-                    table.insert(payload[catKey], idNum)
+                    local uniqueId = (type(v) == "table" and (v.UniqueItemID or v.uniqueItemId)) or "none"
+                    local formattedItem = tostring(idNum) .. ":" .. tostring(uniqueId)
+                    table.insert(payload[catKey], formattedItem)
                     totalSold = totalSold + 1
                 end
             end
@@ -761,7 +780,7 @@ end)
 
 -- Continuous 6-second background auto-sell & gamepass buyer loop
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(6.0)
         pcall(function()
             executeUniversalAutoSell()
@@ -827,7 +846,7 @@ end
 
 -- Staggered Pulse Wave Attack Loop for Carry
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(0.03)
         if isCarry and isRaidOrDungeon() then
             local now = os.clock()
@@ -899,7 +918,7 @@ local function loadWaypointsForDungeon(slug)
 end
 
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(0.05)
         local engine = getCurrentDungeonEngine()
         if engine == "waypoint" and isCarry and isDungeon() then
@@ -958,7 +977,7 @@ end
 
 -- Boss Raid Direct Homing Combat
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(0.05)
         local engine = getCurrentDungeonEngine()
         if engine == "bossraid" and isCarry and isRaidOrDungeon() then
@@ -1093,7 +1112,7 @@ end
 
 -- MHC Highway Playback Loop
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(0.04)
         local engine = getCurrentDungeonEngine()
         if engine == "mhc" and isCarry and isDungeon() then
@@ -1143,7 +1162,7 @@ local function lockAltSpawn()
 end
 
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(math.random(3, 6))
         if not isCarry and isRaidOrDungeon() then
             local char = LocalPlayer.Character
@@ -1415,7 +1434,7 @@ end
 
 -- Main Match Lifecycle Loop
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(0.5)
 
         if isRaidOrDungeon() then
@@ -1733,7 +1752,7 @@ Instance.new("UICorner", forceSellBtn).CornerRadius = UDim.new(0, 4)
 forceSellBtn.Activated:Connect(function()
     forceSellBtn.Text = "⏳ SELLING INVENTORY..."
     task.spawn(function()
-        local sold = executeUniversalAutoSell()
+        local sold = executeUniversalAutoSell(true)
         task.wait(0.5)
         executeSequentialGamepassBuyer()
         forceSellBtn.Text = string.format("✅ SOLD %d ITEMS & CHECKED PASSES!", sold)
@@ -1888,7 +1907,7 @@ end)
 
 -- Real-time UI Update Loop
 task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+    while isCurrentInstance() do
         task.wait(0.5)
         local optLadder, lowestLvl, altName = getOptimalDungeonForAlts()
         local engine = getCurrentDungeonEngine()
@@ -1898,10 +1917,10 @@ task.spawn(function()
         altLvlInfoLbl.Text = string.format("📊 Lowest Alt: %s (Lv %d)", altName, lowestLvl)
         goldInfoLbl.Text = string.format("💰 Gold: %s", tostring(getAccountGold()))
 
-        local has2x = isGamepassOwned("2xGold") and "✅" or "❌"
-        local hasExtra = isGamepassOwned("extraDrop") and "✅" or "❌"
-        local hasVip = isGamepassOwned("VIP") and "✅" or "❌"
-        local hasReset = isGamepassOwned("freeReset") and "✅" or "❌"
+        local has2x = isGamepassOwned("goldGamepass") and "✅" or "❌"
+        local hasExtra = isGamepassOwned("extraItemGamepass") and "✅" or "❌"
+        local hasVip = isGamepassOwned("vip") and "✅" or "❌"
+        local hasReset = isGamepassOwned("freeStatResets") and "✅" or "❌"
         passesInfoLbl.Text = string.format("🛒 2xGold [%s] ExtraDrop [%s] VIP [%s] Reset [%s]", has2x, hasExtra, hasVip, hasReset)
 
         if isCarry then
