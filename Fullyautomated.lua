@@ -875,11 +875,49 @@ local function castSlot(slotKey, tool)
     end)
 end
 
--- Staggered Pulse Wave Attack Loop for Carry
+-- ========================================================================
+--  [MATCH UNLOCK & COUNTDOWN BUFFER ENGINE]
+-- ========================================================================
+local matchStartUnlockTime = 0
+
+local function isMatchUnlocked()
+    if isMainLobby() then
+        matchStartUnlockTime = 0
+        return false
+    end
+
+    -- If in the middle of the 3.8s countdown buffer after clicking start, stay locked
+    if matchStartUnlockTime > 0 and os.clock() < matchStartUnlockTime then
+        return false
+    end
+
+    -- If we are already past the countdown buffer, we are 100% unlocked
+    if matchStartUnlockTime > 0 and os.clock() >= matchStartUnlockTime then
+        return true
+    end
+
+    -- Before clicking start: if staging GUI exists, stay locked
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        local qG = pG and pG:FindFirstChild("queueGui")
+        local sBtn = (pG and pG:FindFirstChild("startButton", true)) or (qG and qG:FindFirstChild("startButton", true))
+        if (qG and qG.Enabled) or (sBtn and sBtn.Visible) then
+            return false
+        end
+    end
+
+    return true
+end
+
+-- ========================================================================
+--  [MODULE 1] DEATH AURA (COMBAT BURST ENGINE FOR LEVELS 33 - 144 ONLY)
+--  Strictly disabled during MHC (Levels 145+) so MHC has full ability control
+-- ========================================================================
 task.spawn(function()
     while isCurrentInstance() do
         task.wait(0.03)
-        if isCarry and isRaidOrDungeon() then
+        local engine = getCurrentDungeonEngine()
+        if isCarry and isDungeon() and (engine == "waypoint" or engine == "bossraid") then
             local now = os.clock()
             local qTool, eTool = getAbilityTools()
             local qCd = getToolCooldown(qTool)
@@ -916,22 +954,39 @@ task.spawn(function()
     end
 end)
 
--- Natural WalkSpeed Enforcer
+-- Walkspeed buffer for Levels 33-144 ONLY (MHC 145+ uses 100% natural WalkSpeed)
 RunService.Heartbeat:Connect(function()
-    if isCarry and isRaidOrDungeon() then
+    local engine = getCurrentDungeonEngine()
+    if isCarry and isDungeon() and (engine == "waypoint" or engine == "bossraid") then
         local char = LocalPlayer.Character
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if hum and hum.WalkSpeed < 23 then hum.WalkSpeed = 23 end
     end
 end)
 
+-- Global Checkpoint Recovery Helper
+local function findClosestWaypointIndex(pos, points)
+    if not points or #points == 0 then return 1 end
+    local best = 1
+    local minD = math.huge
+    for i = 1, #points do
+        local p = Vector3.new(points[i].x, points[i].y, points[i].z)
+        local d = (pos - p).Magnitude
+        if d < minD then
+            minD = d
+            best = i
+        end
+    end
+    return best, minD
+end
+
 -- ========================================================================
---  WAYPOINT ENGINE (LEVELS 33 - 129)
+--  [MODULE 2] GOLDEN MASTER WAYPOINT ENGINE (LEVELS 33 - 129)
 -- ========================================================================
 local currentWaypoints = {}
 local currentLoadedMapSlug = ""
 local currentWpIndex = 1
-local wpArrivalDist = 8.0
+local isPlaybackActive = false
 
 local function loadWaypointsForDungeon(slug)
     local fileName = "dqr_map_" .. slug .. ".json"
@@ -947,45 +1002,68 @@ local function loadWaypointsForDungeon(slug)
     end
 
     local raw = safeReadFile(fileName)
-    if not raw then return false end
+    if not raw or #raw == 0 then return false end
     local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
     local points = (ok and parsed and (parsed.points or parsed))
     if type(points) == "table" and #points > 0 then
         currentWaypoints = points
         currentLoadedMapSlug = slug
         currentWpIndex = 1
+        isPlaybackActive = true
         print(string.format("[Maki Path Engine 🗺️] Successfully loaded %d waypoints for %s!", #points, slug))
-        return true
+        return true, #currentWaypoints
     end
     return false
 end
 
+-- Playback loop for Levels 33-129 (With Smart Respawn Recovery & Auto Map Loading)
+local lastCarryPosBeforeTick = nil
 task.spawn(function()
     while isCurrentInstance() do
-        task.wait(0.05)
+        task.wait(0.02)
         local engine = getCurrentDungeonEngine()
         if engine == "waypoint" and isCarry and isDungeon() then
             local slug = getDungeonSlug()
-            if currentLoadedMapSlug ~= slug then
+            if currentLoadedMapSlug ~= slug or not isPlaybackActive or #currentWaypoints == 0 then
                 loadWaypointsForDungeon(slug)
             end
 
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+            if isPlaybackActive and #currentWaypoints > 0 and currentWpIndex <= #currentWaypoints then
+                local char = LocalPlayer.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-            if hrp and hum and hum.Health > 0 and #currentWaypoints > 0 then
-                local targetPoint = currentWaypoints[currentWpIndex]
-                if targetPoint then
-                    local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
-                    local dist = (hrp.Position - targetPos).Magnitude
-                    hum:MoveTo(targetPos)
+                if hrp and hum and hum.Health > 0 then
+                    if not isMatchUnlocked() then
+                        hum:MoveTo(hrp.Position)
+                    else
+                        local myPos = hrp.Position
 
-                    if dist <= wpArrivalDist then
-                        if currentWpIndex < #currentWaypoints then
+                        if lastCarryPosBeforeTick and (myPos - lastCarryPosBeforeTick).Magnitude >= 28.0 then
+                            local closestIdx, cDist = findClosestWaypointIndex(myPos, currentWaypoints)
+                            currentWpIndex = closestIdx
+                            print(string.format("[Maki Waypoint 🛡️] Respawn detected! Synced to Waypoint %d / %d (Dist: %.1fs)", closestIdx, #currentWaypoints, cDist))
+                        end
+                        lastCarryPosBeforeTick = myPos
+
+                        local targetPoint = currentWaypoints[currentWpIndex]
+                        local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                        local dist = (myPos - targetPos).Magnitude
+
+                        if dist <= 3.8 then
                             currentWpIndex = currentWpIndex + 1
+                            if currentWpIndex <= #currentWaypoints then
+                                targetPoint = currentWaypoints[currentWpIndex]
+                                targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                            end
+                        end
+
+                        if currentWpIndex <= #currentWaypoints then
+                            hum:MoveTo(targetPos)
                         end
                     end
+                else
+                    lastCarryPosBeforeTick = nil
                 end
             end
         end
@@ -993,7 +1071,7 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  BOSS RAID COMBAT ENGINE (LEVELS 130 - 144)
+--  [MODULE 7] BOSS RAID COMBAT ENGINE (LEVELS 130 - 144)
 -- ========================================================================
 local function getHighestUnlockedTier()
     if not reloadInvyRemote then return 30 end
@@ -1023,31 +1101,35 @@ task.spawn(function()
     while isCurrentInstance() do
         task.wait(0.05)
         local engine = getCurrentDungeonEngine()
-        if engine == "bossraid" and isCarry and isRaidOrDungeon() then
+        if engine == "bossraid" and isCarry and isDungeon() then
             local char = LocalPlayer.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
             if hrp and hum and hum.Health > 0 then
-                local bossModel = nil
-                local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon") or Workspace:FindFirstChild("Arena")
-                if enemiesFolder then
-                    for _, c in ipairs(enemiesFolder:GetChildren()) do
-                        local bHum = c:FindFirstChildOfClass("Humanoid")
-                        if bHum and bHum.Health > 0 then
-                            bossModel = c
-                            break
+                if not isMatchUnlocked() then
+                    hum:MoveTo(hrp.Position)
+                else
+                    local bossModel = nil
+                    local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon") or Workspace:FindFirstChild("Arena")
+                    if enemiesFolder then
+                        for _, c in ipairs(enemiesFolder:GetChildren()) do
+                            local bHum = c:FindFirstChildOfClass("Humanoid")
+                            if bHum and bHum.Health > 0 then
+                                bossModel = c
+                                break
+                            end
                         end
                     end
-                end
 
-                if bossModel then
-                    local bRoot = bossModel.PrimaryPart or bossModel:FindFirstChild("HumanoidRootPart") or bossModel:FindFirstChild("Head")
-                    if bRoot then
-                        local dir = (bRoot.Position - hrp.Position).Unit
-                        local standPos = bRoot.Position - (dir * 35.0)
-                        hum:MoveTo(standPos)
-                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
+                    if bossModel then
+                        local bRoot = bossModel.PrimaryPart or bossModel:FindFirstChild("HumanoidRootPart") or bossModel:FindFirstChild("Head")
+                        if bRoot then
+                            local dir = (bRoot.Position - hrp.Position).Unit
+                            local standPos = bRoot.Position - (dir * 35.0)
+                            hum:MoveTo(standPos)
+                            hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
+                        end
                     end
                 end
             end
@@ -1056,49 +1138,23 @@ task.spawn(function()
 end)
 
 -- ========================================================================
---  MAKI HIGHWAY-CORTEX (MHC) ENGINE (LEVELS 145 - 165+)
+--  [MODULE 8] MAKI HIGHWAY-CORTEX (MHC) ENGINE (LEVELS 145 - 165+)
+--  100% NATURAL WALKSPEED & STAIRCASE ELEVATION CALIBRATED
 -- ========================================================================
-local currentHighwayWps = {}
-local currentLoadedHighwaySlug = ""
-local mhcCurrentIndex = 1
-
-local function loadHighwayForDungeon(slug)
-    local fileName = "dqr_highway_" .. slug .. ".json"
-    if not safeIsFile(fileName) then
-        pcall(function()
-            if typeof(writefile) == "function" then
-                local content = game:HttpGet(GITHUB_BASE .. fileName)
-                if content and #content > 50 then
-                    writefile(fileName, content)
-                end
-            end
-        end)
-    end
-
-    local raw = safeReadFile(fileName)
-    if not raw then return false end
-    local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
-    local points = (ok and parsed and (parsed.points or parsed))
-    if type(points) == "table" and #points > 0 then
-        currentHighwayWps = points
-        currentLoadedHighwaySlug = slug
-        mhcCurrentIndex = 1
-        print(string.format("[Maki MHC Engine 🛣️] Successfully loaded %d highway nodes for %s!", #points, slug))
-        return true
-    end
-    return false
-end
-
 local function hasLineOfSight(startPos, targetPos)
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Blacklist
     rayParams.FilterDescendantsInstances = { LocalPlayer.Character, Workspace:FindFirstChild("enemies") }
     rayParams.IgnoreWater = true
+
     local dir = (targetPos - (startPos + Vector3.new(0, 2, 0)))
     local result = Workspace:Raycast(startPos + Vector3.new(0, 2, 0), dir, rayParams)
+
     if result and result.Instance then
         local hitPart = result.Instance
-        if hitPart.Transparency >= 0.85 or not hitPart.CanCollide then return true end
+        if hitPart.Transparency >= 0.85 or not hitPart.CanCollide then
+            return true
+        end
         return false
     end
     return true
@@ -1127,7 +1183,7 @@ local function scanLivingEnemies()
             local pos = root.Position
             local dist = (myPos - pos).Magnitude
             local nameLower = obj.Name:lower()
-            local isBoss = (nameLower:find("boss") ~= nil or nameLower:find("guardian") ~= nil or hum.MaxHealth > 3000000)
+            local isBoss = (nameLower:find("boss") ~= nil or nameLower:find("guardian") ~= nil or nameLower:find("inferno") ~= nil or nameLower:find("triton") ~= nil or nameLower:find("kraken") ~= nil or hum.MaxHealth > 3000000)
 
             table.insert(enemies, {
                 model = obj,
@@ -1156,6 +1212,11 @@ local function scanLivingEnemies()
         end
     end
 
+    local arena = Workspace:FindFirstChild("Arena")
+    if arena then
+        for _, c in ipairs(arena:GetChildren()) do checkModel(c) end
+    end
+
     table.sort(enemies, function(a, b)
         if a.isBoss and not b.isBoss then return true end
         if not a.isBoss and b.isBoss then return false end
@@ -1165,42 +1226,184 @@ local function scanLivingEnemies()
     return enemies, myPos
 end
 
--- MHC Highway Playback Loop
+local function getTargetGroup(enemies, myPos)
+    if #enemies == 0 then return nil end
+
+    local leader = nil
+    for _, e in ipairs(enemies) do
+        if hasLineOfSight(myPos, e.pos) then
+            leader = e
+            break
+        end
+    end
+
+    if not leader then return nil end
+
+    local group = { leader }
+    local maxDistInGroup = leader.dist
+
+    for i = 1, #enemies do
+        local e = enemies[i]
+        if e ~= leader and (e.pos - leader.pos).Magnitude <= 45.0 then
+            table.insert(group, e)
+            if e.dist > maxDistInGroup then
+                maxDistInGroup = e.dist
+            end
+        end
+    end
+
+    local sumPos = Vector3.zero
+    for _, e in ipairs(group) do sumPos = sumPos + e.pos end
+    local groupCenter = sumPos / #group
+
+    return {
+        mobs = group,
+        count = #group,
+        leader = leader,
+        center = groupCenter,
+        nearestDist = leader.dist,
+        farthestDist = maxDistInGroup,
+        isBoss = leader.isBoss
+    }
+end
+
+-- MHC Execution Loop (Levels 145+ Natural Speed & Direct Dungeon Activation)
+local mhcCurrentIndex = 1
+local mhcLastQTime = 0
+local mhcLastETime = 0
+local lastMhcPosBeforeTick = nil
+
 task.spawn(function()
     while isCurrentInstance() do
-        task.wait(0.04)
+        task.wait(0.02)
         local engine = getCurrentDungeonEngine()
-        if engine == "mhc" and isCarry and isDungeon() then
-            local slug = getDungeonSlug()
-            if currentLoadedHighwaySlug ~= slug then
-                loadHighwayForDungeon(slug)
-            end
 
+        if engine == "mhc" and isCarry and isDungeon() then
             local char = LocalPlayer.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-            if hrp and hum and hum.Health > 0 and #currentHighwayWps > 0 then
-                local enemies, myPos = scanLivingEnemies()
-                local nearbyTarget = enemies[1]
-
-                if nearbyTarget and nearbyTarget.dist <= 65 and hasLineOfSight(myPos, nearbyTarget.pos) then
-                    local dir = (nearbyTarget.pos - hrp.Position).Unit
-                    local combatPos = nearbyTarget.pos - (dir * 25.0)
-                    hum:MoveTo(combatPos)
-                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(nearbyTarget.pos.X, hrp.Position.Y, nearbyTarget.pos.Z))
+            if hrp and hum and hum.Health > 0 then
+                if not isMatchUnlocked() then
+                    hum:MoveTo(hrp.Position)
+                    task.wait(0.05)
                 else
-                    local wp = currentHighwayWps[mhcCurrentIndex]
-                    if wp then
-                        local targetPos = Vector3.new(wp.x, wp.y, wp.z)
-                        hum:MoveTo(targetPos)
-                        if (hrp.Position - targetPos).Magnitude <= 12.0 then
-                            if mhcCurrentIndex < #currentHighwayWps then
-                                mhcCurrentIndex = mhcCurrentIndex + 1
+                    local myPos = hrp.Position
+                    local now = os.clock()
+
+                    local slug, _ = getDungeonSlug()
+                    local fileName = string.format("dqr_highway_%s.json", slug)
+                    if not safeIsFile(fileName) then
+                        pcall(function()
+                            if typeof(writefile) == "function" then
+                                local content = game:HttpGet(GITHUB_BASE .. fileName)
+                                if content and #content > 50 then
+                                    writefile(fileName, content)
+                                end
+                            end
+                        end)
+                    end
+                    local raw = safeReadFile(fileName)
+
+                    if raw and #raw > 0 then
+                        local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
+                        local waypoints = (ok and parsed and (parsed.points or parsed)) or {}
+
+                        if #waypoints > 0 then
+                            -- Checkpoint / Respawn detection
+                            if lastMhcPosBeforeTick and (myPos - lastMhcPosBeforeTick).Magnitude >= 28.0 then
+                                local closestIdx, cDist = findClosestWaypointIndex(myPos, waypoints)
+                                mhcCurrentIndex = closestIdx
+                                print(string.format("[Maki MHC 🛡️] Respawn detected! Synced to Highway Point %d / %d (Dist: %.1fs)", closestIdx, #waypoints, cDist))
+                            end
+                            lastMhcPosBeforeTick = myPos
+
+                            local targetPoint = waypoints[mhcCurrentIndex] or waypoints[#waypoints]
+                            local targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                            local distToWp = (myPos - targetPos).Magnitude
+
+                            local enemies, _ = scanLivingEnemies()
+                            local qTool, eTool = getAbilityTools()
+                            local qCd = getToolCooldown(qTool)
+                            local eCd = getToolCooldown(eTool)
+                            local qReady = (qCd <= 0.1) and ((now - mhcLastQTime) >= 0.8)
+                            local eReady = (eCd <= 0.1) and ((now - mhcLastETime) >= 0.5)
+
+                            local targetGroup = getTargetGroup(enemies, myPos)
+
+                            if targetGroup then
+                                -- Height Difference Calculation for Staircases / Slopes
+                                local heightDiff = math.abs(myPos.Y - targetGroup.center.Y)
+                                local effectiveAoELimit = (heightDiff > 12.0) and 50.0 or 82.0
+
+                                -- Pre-cast Q when approaching pack within 110 studs
+                                if targetGroup.farthestDist <= 110.0 and qReady then
+                                    mhcLastQTime = now
+                                    castSlot("q", qTool)
+                                end
+
+                                if targetGroup.farthestDist <= effectiveAoELimit then
+                                    -- PAUSE ON HIGHWAY & WIPE GROUP!
+                                    hum:MoveTo(myPos)
+
+                                    local lookDir = Vector3.new(targetGroup.center.X - myPos.X, 0, targetGroup.center.Z - myPos.Z).Unit
+                                    hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
+
+                                    if qReady then
+                                        mhcLastQTime = now
+                                        castSlot("q", qTool)
+                                    end
+
+                                    if eReady then
+                                        mhcLastETime = now
+                                        castSlot("e", eTool)
+                                    end
+                                else
+                                    -- Advance along highway
+                                    if distToWp <= 3.5 then
+                                        mhcCurrentIndex = mhcCurrentIndex + 1
+                                        if mhcCurrentIndex <= #waypoints then
+                                            targetPoint = waypoints[mhcCurrentIndex]
+                                            targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                                        end
+                                    end
+
+                                    if mhcCurrentIndex <= #waypoints then
+                                        hum:MoveTo(targetPos)
+                                    end
+                                end
+                            else
+                                -- Sprint down highway
+                                if qReady and (now - mhcLastQTime) >= 1.5 then
+                                    mhcLastQTime = now
+                                    castSlot("q", qTool)
+                                end
+
+                                -- Off-track auto-recovery
+                                if distToWp > 14.0 then
+                                    local closestIdx, _ = findClosestWaypointIndex(myPos, waypoints)
+                                    mhcCurrentIndex = closestIdx
+                                    targetPoint = waypoints[mhcCurrentIndex]
+                                    targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                                end
+
+                                if distToWp <= 3.5 then
+                                    mhcCurrentIndex = mhcCurrentIndex + 1
+                                    if mhcCurrentIndex <= #waypoints then
+                                        targetPoint = waypoints[mhcCurrentIndex]
+                                        targetPos = Vector3.new(targetPoint.x, targetPoint.y, targetPoint.z)
+                                    end
+                                end
+
+                                if mhcCurrentIndex <= #waypoints then
+                                    hum:MoveTo(targetPos)
+                                end
                             end
                         end
                     end
                 end
+            else
+                lastMhcPosBeforeTick = nil
             end
         end
     end
@@ -1327,6 +1530,30 @@ end
 
 -- Carry Staging Start Trigger
 local function triggerCarryStartMatch()
+    if matchStartUnlockTime == 0 then
+        matchStartUnlockTime = os.clock() + 3.8
+        print("[Maki Staging ⏳] Staging start triggered! Holding position for 3.8s countdown & barrier drop...")
+    end
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        local sBtn1 = pG:FindFirstChild("startButton") and pG.startButton:FindFirstChild("TextButton", true)
+        if sBtn1 then
+            pcall(function()
+                for _, c in ipairs(getconnections(sBtn1.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn1.MouseButton1Click)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn1.MouseButton1Down)) do c:Fire() end
+            end)
+        end
+        local qG = pG:FindFirstChild("queueGui")
+        local sBtn2 = qG and qG:FindFirstChild("lobbyInfo") and qG.lobbyInfo:FindFirstChild("startButton", true)
+        if sBtn2 then
+            pcall(function()
+                for _, c in ipairs(getconnections(sBtn2.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn2.MouseButton1Click)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn2.MouseButton1Down)) do c:Fire() end
+            end)
+        end
+    end
     if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
     if startDungeonRemote then pcall(function() startDungeonRemote:FireServer() end) end
     if startBossRaidRemote then pcall(function() startBossRaidRemote:FireServer() end) end
@@ -1533,6 +1760,9 @@ task.spawn(function()
                                 task.wait(2.0)
                                 if replayRemote then pcall(function() replayRemote:FireServer() end) end
                                 if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                                matchStartUnlockTime = 0
+                                currentWpIndex = 1
+                                mhcCurrentIndex = 1
                             end
                         else
                             task.wait(2.5)
@@ -1546,13 +1776,19 @@ task.spawn(function()
                         task.wait(2.0)
                         if replayRemote then pcall(function() replayRemote:FireServer() end) end
                         if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                        matchStartUnlockTime = 0
+                        currentWpIndex = 1
+                        mhcCurrentIndex = 1
                     else
                         task.wait(2.5)
                         if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
                     end
                 end
+            elseif not finished then
+                matchHandled = false
             end
         elseif isMainLobby() then
+            matchStartUnlockTime = 0
             matchHandled = false
             altSpawnPosition = nil
             currentWpIndex = 1
