@@ -99,7 +99,8 @@ local announceDropRemote         = remotes and remotes:FindFirstChild("AnnounceD
 local createBossLobbyRemote      = remotes and (remotes:FindFirstChild("createBossLobby") or remotes:FindFirstChild("createRaidLobby"))
 local addPlayerToBossWhitelistRemote = remotes and (remotes:FindFirstChild("addPlayerToBossWhitelist") or remotes:FindFirstChild("addPlayerToRaidWhitelist"))
 local startBossRaidRemote        = remotes and (remotes:FindFirstChild("startBossRaid") or remotes:FindFirstChild("startRaid"))
-local buyGamepassRemote          = remotes and (remotes:FindFirstChild("buyGamepass") or remotes:FindFirstChild("purchaseGamepass") or remotes:FindFirstChild("buyGamepassGold") or remotes:FindFirstChild("buyPass"))
+local buyGamepassRemote          = remotes and (remotes:FindFirstChild("requestGoldGamepassPurchase") or remotes:FindFirstChild("buyGamepass") or remotes:FindFirstChild("purchaseGamepass") or remotes:FindFirstChild("buyGamepassGold") or remotes:FindFirstChild("buyPass"))
+local getGoldGamepassPriceRemote = remotes and remotes:FindFirstChild("getGoldGamepassPrice")
 local getGoldAmountRemote        = remotes and (remotes:FindFirstChild("getGoldAmount") or remotes:FindFirstChild("getGold"))
 
 -- ========================================================================
@@ -1557,8 +1558,9 @@ end)
 local isCreatingLobby = false
 
 -- ========================================================================
---  [MODULE 5B] ORDERED GOLD GAMEPASS BUYER ENGINE
+--  [MODULE 5B] DYNAMIC GOLD GAMEPASS BUYER ENGINE
 --  Priority Order: 1. 2xGold -> 2. +1 Drops -> 3. VIP -> 4. Stat Reset
+--  Queries live server price dynamically (never hardcodes fixed gold amount)
 -- ========================================================================
 local function getHighestUnlockedTier()
     if not reloadInvyRemote then return 30 end
@@ -1640,16 +1642,48 @@ local function isGamepassOwned(passId)
     return false
 end
 
+local function getLiveGamepassPrice(passId)
+    if getGoldGamepassPriceRemote then
+        local ok, res = pcall(function() return getGoldGamepassPriceRemote:InvokeServer(passId) end)
+        if ok and type(res) == "table" and res.cost then
+            return tonumber(res.cost), res.owned == true, res.level
+        end
+    end
+
+    -- Fallback: inspect Shop GUI
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        local sGui = pG:FindFirstChild("shopGui") or pG:FindFirstChild("ShopGui") or pG:FindFirstChild("Shop")
+        if sGui then
+            for _, d in ipairs(sGui:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible then
+                    local parent = d.Parent
+                    local parentName = parent and parent.Name:lower() or ""
+                    if parentName:find(passId:lower()) or (d.Name:lower():find("price") or d.Name:lower():find("cost")) then
+                        local costNum = tonumber(d.Text:gsub("%D", ""))
+                        if costNum and costNum > 1000000 then
+                            return costNum, false, nil
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return 8400000000, false, nil
+end
+
 local function purchaseGamepassByRemote(passId)
-    if not buyGamepassRemote then return false, "No buy remote" end
+    local remote = remotes and (remotes:FindFirstChild("requestGoldGamepassPurchase") or remotes:FindFirstChild("buyGamepass") or remotes:FindFirstChild("purchaseGamepass") or remotes:FindFirstChild("buyGamepassGold") or remotes:FindFirstChild("buyPass"))
+    if not remote then return false, "No buy remote" end
     local ok, res = pcall(function()
-        return buyGamepassRemote:InvokeServer(passId)
+        return remote:InvokeServer(passId)
     end)
     if ok and (res == true or res == "success" or res == nil) then
         return true
     end
     local ok2 = pcall(function()
-        buyGamepassRemote:FireServer(passId)
+        remote:FireServer(passId)
     end)
     return ok2
 end
@@ -1693,18 +1727,21 @@ local function executeSequentialGamepassBuyer()
         local curGold = getAccountGold()
 
         for stepIndex, pass in ipairs(TargetGamepassOrder) do
-            if not isGamepassOwned(pass.id) then
-                print(string.format("[Maki Gamepass Buyer 🛒] Checking Queue Step %d: %s (%s)...",
-                    stepIndex, pass.name, pass.id))
+            local liveCost, isServerOwned, reqLvl = getLiveGamepassPrice(pass.id)
+            if isServerOwned then ownedGamepassesCache[pass.id] = true end
 
-                local goldNeeded = 8400000000 -- 8.4 Billion
-                if curGold < goldNeeded then
-                    print(string.format("[Maki Gamepass Buyer ⏳] Need 8.4B gold for %s. Current Gold: %.2fB. Waiting for next sell cycle.",
-                        pass.name, curGold / 1000000000))
+            if not isGamepassOwned(pass.id) then
+                print(string.format("[Maki Gamepass Buyer 🛒] Step %d: %s (%s) | Server Price: %.2fB Gold (Req Lv: %s)...",
+                    stepIndex, pass.name, pass.id, liveCost / 1000000000, tostring(reqLvl or "145")))
+
+                if curGold < liveCost then
+                    print(string.format("[Maki Gamepass Buyer ⏳] Need %.2fB gold for %s. Current Gold: %.2fB. Waiting for next sell cycle.",
+                        liveCost / 1000000000, pass.name, curGold / 1000000000))
                     break
                 end
 
-                print(string.format("[Maki Gamepass Buyer 💎] Purchasing %s with %.2fB Gold!", pass.name, curGold / 1000000000))
+                print(string.format("[Maki Gamepass Buyer 💎] Purchasing %s with %.2fB Gold (Price: %.2fB)!",
+                    pass.name, curGold / 1000000000, liveCost / 1000000000))
                 local purchased = purchaseGamepassByRemote(pass.id)
                 if not purchased then
                     purchaseGamepassByShopUI(pass)
@@ -2048,7 +2085,7 @@ task.spawn(function()
             currentWpIndex = 1
             mhcCurrentIndex = 1
 
-            -- Execute Sequential Gold Gamepass Buyer in Lobby
+            -- Execute Dynamic Sequential Gold Gamepass Buyer in Lobby
             executeSequentialGamepassBuyer()
 
             if isCarry and Config.AutoProgression and not lobbyVerificationActive and not isCreatingLobby then
