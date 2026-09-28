@@ -806,39 +806,52 @@ end)
 local knownInventoryKeys = {}
 local initialScanComplete = false
 
-local function isItemProtectedFromSell(category, itemName, rarity, isEquipped)
+local function isItemProtectedFromSell(category, itemName, rarity, isEquipped, itemLvl)
     if isEquipped then return true end
 
+    local name = tostring(itemName or "")
+    local nameLower = name:lower()
     local rLower = rarity and rarity:lower() or "common"
-    if rLower == "legendary" or rLower == "ultimate" or rLower == "mythic" then
+    local lvl = tonumber(itemLvl) or 0
+
+    if isSpecialEventItem(name) then
         return true
     end
 
-    if isSpecialEventItem(itemName) then
+    -- Boss Raid Items (+1 to +30, Level 130 items) -> SELL ALL unequipped!
+    local isBossRaidTier = name:match("%+%s*%d+") ~= nil
+    local isBossRaidReq  = (lvl == 130)
+    local isBossRaidKey  = nameLower:find("boss raid") or nameLower:find("raid drop")
+    if isBossRaidTier or isBossRaidReq or isBossRaidKey then
+        return false -- DO NOT protect -> SELL!
+    end
+
+    -- High-Tier Collects (Eldenbark, Valhalla)
+    local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(name)
+    if isCollect and isHighTier then
         return true
     end
 
-    local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(itemName)
+    -- Purple Collect Armors from standard progression dungeons
+    if (category == "chest" or category == "helmet") and isCollect then
+        return true
+    end
 
-    if category == "ability" then
+    -- Endgame Level 145+ Legendaries, Ultimates, Mythics
+    if lvl >= 145 and (rLower == "legendary" or rLower == "ultimate" or rLower == "mythic") then
+        return true
+    end
+
+    -- Progression trash below 145
+    if lvl < 145 then
         return false
     end
 
-    if category == "weapon" then
-        if isCollect and isHighTier then
-            return true
-        end
+    if rLower ~= "legendary" and rLower ~= "ultimate" and rLower ~= "mythic" then
         return false
     end
 
-    if category == "chest" or category == "helmet" then
-        if isCollect then
-            return true
-        end
-        return false
-    end
-
-    return false
+    return true
 end
 
 local function executeUniversalAutoSell()
@@ -856,8 +869,9 @@ local function executeUniversalAutoSell()
             local isEquipped = (typeof(item.equipped) == "table" and (item.equipped.q or item.equipped.e)) or (item.equipped == true)
             local rarity = item.rarity and item.rarity:lower() or "common"
             local itemName = item.name or item.displayName or itemKey
+            local itemLvl = item.levelReq or item.level or 0
 
-            local protected = isItemProtectedFromSell(category, itemName, rarity, isEquipped)
+            local protected = isItemProtectedFromSell(category, itemName, rarity, isEquipped, itemLvl)
 
             if initialScanComplete and not knownInventoryKeys[itemKey] then
                 knownInventoryKeys[itemKey] = true
@@ -871,7 +885,9 @@ local function executeUniversalAutoSell()
             if not protected then
                 local idNum = tonumber(string.sub(itemKey, #keyPrefix + 1)) or tonumber(string.match(itemKey, "%d+"))
                 if idNum then
-                    table.insert(itemsToSell[category], idNum)
+                    local uid = (type(item) == "table" and (item.UniqueItemID or item.uniqueItemId)) or "none"
+                    local formattedItem = tostring(idNum) .. ":" .. tostring(uid)
+                    table.insert(itemsToSell[category], formattedItem)
                     totalSold = totalSold + 1
                 end
             end
@@ -887,7 +903,7 @@ local function executeUniversalAutoSell()
 
     if totalSold > 0 then
         pcall(function() sellItemEventRemote:FireServer(itemsToSell) end)
-        print(string.format("[%s] 💰 Auto-Sold %d trash items! (Collect Armors, High-Tier Weapons & Legendaries 100%% SAFE)", LocalPlayer.Name, totalSold))
+        print(string.format("[%s] 💰 Auto-Sold %d trash & Boss Raid items! (UniqueItemID Validated)", LocalPlayer.Name, totalSold))
     end
 end
 
