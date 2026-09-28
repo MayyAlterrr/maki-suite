@@ -6,11 +6,12 @@
 --  COMPLETE 100% UNATTENDED LIFECYCLE (LEVEL 33 TO 165+):
 --    • STAGE 1 (Lv 33-129): Full Waypoint Progression (Winter Outpost -> Steampunk Sewers)
 --    • STAGE 2 (Lv 130-144): Automated Boss Raid Fast-Track (Tier 1 -> Tier 30 Loop)
---    • STAGE 3 (Lv 145 Checkpoint): Full Loot Liquidation + Auto-Buy 2x Gold & Extra Drop Gamepasses
+--    • STAGE 3 (Gamepass Buyer): In-Order Auto-Buy: 2x Gold ➔ +1 Drops ➔ VIP ➔ Stat Reset
 --    • STAGE 4 (Lv 145-153): Orbital Outpost MHC Highway Engine
---    • STAGE 5 (Lv 154 Checkpoint): Return to Lobby, Auto-Buy VIP & Stat Reset Pass, Auto-Reset Stats
---    • STAGE 6 (Lv 155-165+): Volcanic Chambers & Aquatic Temple MHC Endgame
---    • ZERO-TOUCH: Host auto-creates, alts auto-join, 0ms auto-accept, 100% synced auto-sell on ALL accounts!
+--    • STAGE 5 (Lv 154-165+): Volcanic Chambers & Aquatic Temple MHC Endgame
+--    • FIXED BOSS RAID AUTO-SELL: Automatically identifies & sells all Boss Raid loot
+--      (+21, +30, Level 130 items, junk armors/abilities) on BOTH Carry & Alts!
+--    • ZERO-TOUCH: Host auto-creates, alts auto-join, 0ms auto-accept, 100% synced!
 -- ========================================================================
 
 local Players = game:GetService("Players")
@@ -45,7 +46,7 @@ local getGuiParent = function()
 end
 
 -- ========================================================================
---  REMOTES & NETWORKING (STANDARD + BOSS RAID + SHOP + STATS)
+--  REMOTES & NETWORKING
 -- ========================================================================
 local remotes = ReplicatedStorage:WaitForChild("remotes", 15)
 
@@ -78,9 +79,8 @@ local reloadInvyRemote           = remotes and remotes:FindFirstChild("reloadInv
 local getGoldAmountRemote        = remotes and remotes:FindFirstChild("getGoldAmount")
 local requestGoldGamepassPurchaseRemote = remotes and remotes:FindFirstChild("requestGoldGamepassPurchase")
 local getGoldGamepassPriceRemote = remotes and remotes:FindFirstChild("getGoldGamepassPrice")
+local goldGamepassPurchaseResultRemote = remotes and remotes:FindFirstChild("goldGamepassPurchaseResult")
 local resetPointsWithGamepassRemote = remotes and remotes:FindFirstChild("resetPointsWithGamepass")
-local resetSkillPointsRemote     = remotes and remotes:FindFirstChild("resetSkillPoints")
-local spendSkillPointRemote      = remotes and remotes:FindFirstChild("spendSkillPoint")
 
 -- Combat & Misc Remotes
 local abilityUsedRemote          = remotes and remotes:FindFirstChild("abilityUsed")
@@ -131,7 +131,7 @@ local function isSpecialEventItem(itemName)
 end
 
 -- ========================================================================
---  FILE I/O (UNIVERSAL EXECUTOR & DELTA MOBILE COMPATIBLE)
+--  FILE I/O
 -- ========================================================================
 local function safeIsFile(fileName)
     if typeof(isfile) == "function" then
@@ -148,9 +148,7 @@ end
 local function safeReadFile(fileName)
     if typeof(readfile) == "function" then
         local ok, res = pcall(readfile, fileName)
-        if ok and res and #res > 0 then
-            return res
-        end
+        if ok and res and #res > 0 then return res end
     end
     return nil
 end
@@ -163,7 +161,7 @@ local function safeWriteFile(fileName, content)
 end
 
 -- ========================================================================
---  CONFIG & STATE PERSISTENCE (dqr_party_config.json)
+--  CONFIG & PERSISTENCE (dqr_party_config.json)
 -- ========================================================================
 local ConfigFileName = "dqr_party_config.json"
 local Config = {
@@ -180,7 +178,6 @@ local Config = {
     AutoProgression       = true,
     AutoSellTrashes       = true,
     AutoBuyGamepasses     = true,
-    AutoStatReset         = true,
     AutoNextTier          = true,
     CurrentTier           = 1,
     DiscordWebhookUrl     = "",
@@ -190,8 +187,6 @@ local Config = {
     CpuSaverMode          = true,
     UltraPotatoGraphics   = true,
     Disable3dOnAlts       = true,
-    Checkpoint145Completed = false,
-    Checkpoint154Completed = false,
 }
 
 local function saveConfig()
@@ -223,7 +218,6 @@ local function loadConfig()
     if Config.AutoProgression == nil then Config.AutoProgression = true end
     if Config.AutoSellTrashes == nil then Config.AutoSellTrashes = true end
     if Config.AutoBuyGamepasses == nil then Config.AutoBuyGamepasses = true end
-    if Config.AutoStatReset == nil then Config.AutoStatReset = true end
     if Config.AutoNextTier == nil then Config.AutoNextTier = true end
     if not Config.CurrentTier then Config.CurrentTier = 1 end
     if not Config.DiscordWebhookUrl then Config.DiscordWebhookUrl = "" end
@@ -241,7 +235,7 @@ local function updateRoleStatus()
 end
 
 -- ========================================================================
---  GRAPHICS & CPU SAVER OPTIMIZATION
+--  PERFORMANCE & ANTI-AFK
 -- ========================================================================
 local function applyPerformanceOptimizations()
     pcall(function()
@@ -273,9 +267,6 @@ task.spawn(function()
     applyPerformanceOptimizations()
 end)
 
--- ========================================================================
---  ANTI-AFK ENGINE
--- ========================================================================
 LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new(0, 0))
@@ -537,8 +528,18 @@ local function getCurrentDungeonEngine()
 end
 
 -- ========================================================================
---  AUTOMATED GOLD GAMEPASS BUYER & STAT RESET ENGINE
+--  ORDERED GOLD GAMEPASS BUYER ENGINE
+--  Priority Order: 1. 2xGold -> 2. +1 Drops -> 3. VIP -> 4. Stat Reset
 -- ========================================================================
+local TargetGamepassOrder = {
+    { id = "2xGold",    name = "2x Gold" },
+    { id = "extraDrop", name = "+1 Drops" },
+    { id = "VIP",       name = "VIP" },
+    { id = "freeReset", name = "Stat Reset" },
+}
+
+local ownedGamepassesCache = {}
+
 local function getAccountGold()
     if getGoldAmountRemote then
         local ok, g = pcall(function() return getGoldAmountRemote:InvokeServer() end)
@@ -553,26 +554,42 @@ local function getAccountGold()
 end
 
 local function isGamepassOwned(passId)
+    if ownedGamepassesCache[passId] then return true end
+
+    -- Check direct values in LocalPlayer
     local pVal = LocalPlayer:FindFirstChild(passId)
-    if pVal and (pVal:IsA("BoolValue") and pVal.Value == true) then return true end
+    if pVal and (pVal:IsA("BoolValue") and pVal.Value == true) then
+        ownedGamepassesCache[passId] = true
+        return true
+    end
 
     local gpFolder = LocalPlayer:FindFirstChild("gamepasses") or LocalPlayer:FindFirstChild("Gamepasses")
     if gpFolder then
         local child = gpFolder:FindFirstChild(passId)
-        if child and ((child:IsA("BoolValue") and child.Value == true) or child.Value == 1) then return true end
+        if child and ((child:IsA("BoolValue") and child.Value == true) or child.Value == 1) then
+            ownedGamepassesCache[passId] = true
+            return true
+        end
     end
 
+    -- Check Shop UI in PlayerGui
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
-    local shop = pG and pG:FindFirstChild("mainInterface") and pG.mainInterface:FindFirstChild("shop")
-    local gpFrame = shop and shop:FindFirstChild("gamepasses") and shop.gamepasses:FindFirstChild("inner") and shop.gamepasses.inner:FindFirstChild("ScrollingFrame")
-    if gpFrame then
-        local item = gpFrame:FindFirstChild(passId)
-        if item then
-            local ownedLbl = item:FindFirstChild("owned") or item:FindFirstChild("OWNED") or item:FindFirstChild("Owned")
-            if ownedLbl and ownedLbl.Visible then return true end
-            for _, d in ipairs(item:GetDescendants()) do
-                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text and d.Text:upper():find("OWNED") and d.Visible then
+    if pG then
+        local shop = pG:FindFirstChild("mainInterface") and pG.mainInterface:FindFirstChild("shop")
+        local gpFrame = shop and shop:FindFirstChild("gamepasses") and shop.gamepasses:FindFirstChild("inner") and shop.gamepasses.inner:FindFirstChild("ScrollingFrame")
+        if gpFrame then
+            local item = gpFrame:FindFirstChild(passId)
+            if item then
+                local ownedLbl = item:FindFirstChild("owned") or item:FindFirstChild("OWNED") or item:FindFirstChild("Owned")
+                if ownedLbl and ownedLbl.Visible then
+                    ownedGamepassesCache[passId] = true
                     return true
+                end
+                for _, d in ipairs(item:GetDescendants()) do
+                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text and d.Text:upper():find("OWNED") and d.Visible then
+                        ownedGamepassesCache[passId] = true
+                        return true
+                    end
                 end
             end
         end
@@ -581,192 +598,175 @@ local function isGamepassOwned(passId)
     return false
 end
 
-local function buyGamepassWithGold(passId)
-    if not requestGoldGamepassPurchaseRemote then return false end
-    if isGamepassOwned(passId) then return true end
-
-    local gold = getAccountGold()
-    local price = nil
-    if getGoldGamepassPriceRemote then
-        local ok, p = pcall(function() return getGoldGamepassPriceRemote:InvokeServer(passId) end)
-        if ok and tonumber(p) then price = tonumber(p) end
-    end
-
-    if not price or gold >= price then
-        print(string.format("[%s] 🛒 Auto-Purchasing Gamepass with Gold: %s (Price: %s, Current Gold: %s)...",
-            LocalPlayer.Name, passId, tostring(price or "Unknown"), tostring(gold)))
-        pcall(function()
-            requestGoldGamepassPurchaseRemote:FireServer(passId)
-        end)
-        task.wait(0.5)
-        local owned = isGamepassOwned(passId)
-        if owned then
-            print(string.format("[%s] 🎉 Successfully acquired %s gamepass!", LocalPlayer.Name, passId))
-            sendMilestoneNotification("🛒 Gamepass Purchased with Gold!", string.format("**%s** bought **%s** for **%s** gold!", LocalPlayer.Name, passId, tostring(price or "N/A")), 33023)
+-- Server purchase result listener
+if goldGamepassPurchaseResultRemote then
+    goldGamepassPurchaseResultRemote.OnClientEvent:Connect(function(passId, success, ...)
+        if success then
+            local pStr = tostring(passId)
+            ownedGamepassesCache[pStr] = true
+            print(string.format("[%s] 🎉 Server Confirmed Purchase of Gamepass: %s!", LocalPlayer.Name, pStr))
+            sendMilestoneNotification("🛒 Gamepass Purchased with Gold!", string.format("**%s** server-confirmed purchase of **%s**!", LocalPlayer.Name, pStr), 65280)
         end
-        return owned
-    else
-        print(string.format("[%s] ⏳ Need more gold for %s. Price: %s, Gold: %s",
-            LocalPlayer.Name, passId, tostring(price), tostring(gold)))
-        return false
-    end
+    end)
 end
 
--- Checkpoint 145 Engine (2x Gold + Extra Drop)
-local function executeCheckpoint145Purchases()
-    if not Config.AutoBuyGamepasses then return end
-    print(string.format("[%s] 🌟 Level 145 Checkpoint Reached! Checking 2x Gold & Extra Drop...", LocalPlayer.Name))
-    buyGamepassWithGold("2xGold")
-    task.wait(0.3)
-    buyGamepassWithGold("extraDrop")
-    task.wait(0.3)
-    if isGamepassOwned("2xGold") and isGamepassOwned("extraDrop") then
-        Config.Checkpoint145Completed = true
-        saveConfig()
-    end
-end
+-- Sequential Gamepass Buyer (Exact Priority: 2x Gold -> +1 Drops -> VIP -> Stat Reset)
+local isBuyingPasses = false
+local function executeSequentialGamepassBuyer()
+    if isBuyingPasses or not Config.AutoBuyGamepasses or not requestGoldGamepassPurchaseRemote then return end
+    isBuyingPasses = true
 
--- Checkpoint 154 Engine (VIP + Free Stat Reset + Reset Execution)
-local function executeCheckpoint154PurchasesAndReset()
-    if not Config.AutoBuyGamepasses then return end
-    print(string.format("[%s] 🌟 Level 154 Checkpoint Reached! Checking VIP & Free Stat Reset...", LocalPlayer.Name))
-    buyGamepassWithGold("VIP")
-    task.wait(0.3)
-    buyGamepassWithGold("freeReset")
-    task.wait(0.3)
+    task.spawn(function()
+        local myGold = getAccountGold()
 
-    if Config.AutoStatReset and resetPointsWithGamepassRemote and isGamepassOwned("freeReset") then
-        print(string.format("[%s] 🔄 Executing Free Stat Reset with Gamepass...", LocalPlayer.Name))
-        pcall(function()
-            resetPointsWithGamepassRemote:FireServer()
-        end)
-        task.wait(0.5)
-        print(string.format("[%s] ✅ Stat points successfully reset and refunded!", LocalPlayer.Name))
-        sendMilestoneNotification("🔄 Stat Reset Executed!", string.format("**%s** successfully reset skill points with Free Reset Gamepass at Level 154!", LocalPlayer.Name), 65280)
-    end
+        for _, pass in ipairs(TargetGamepassOrder) do
+            if not isGamepassOwned(pass.id) then
+                local price = nil
+                if getGoldGamepassPriceRemote then
+                    local ok, p = pcall(function() return getGoldGamepassPriceRemote:InvokeServer(pass.id) end)
+                    if ok and tonumber(p) then price = tonumber(p) end
+                end
 
-    if isGamepassOwned("VIP") and isGamepassOwned("freeReset") then
-        Config.Checkpoint154Completed = true
-        saveConfig()
-    end
-end
+                if not price or myGold >= price then
+                    print(string.format("[%s] 🛒 Auto-Buying Gamepass (#%s): %s (Price: %s, Current Gold: %s)...",
+                        LocalPlayer.Name, pass.id, pass.name, tostring(price or "Unknown"), tostring(myGold)))
+                    pcall(function()
+                        requestGoldGamepassPurchaseRemote:FireServer(pass.id)
+                    end)
+                    task.wait(1.0)
 
--- Background Auto-Buyer Loop (Runs on Carry and Alts periodically)
-task.spawn(function()
-    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
-        task.wait(10.0)
-        if Config.AutoBuyGamepasses then
-            local lowestLvl = getLowestAltLevel()
-            if lowestLvl >= 145 and not Config.Checkpoint145Completed then
-                executeCheckpoint145Purchases()
-            end
-            if lowestLvl >= 154 and not Config.Checkpoint154Completed then
-                executeCheckpoint154PurchasesAndReset()
+                    if isGamepassOwned(pass.id) then
+                        print(string.format("[%s] 🎉 Successfully acquired %s gamepass!", LocalPlayer.Name, pass.name))
+                        sendMilestoneNotification("🛒 Gamepass Purchased with Gold!", string.format("**%s** bought **%s** (%s) for **%s** gold!", LocalPlayer.Name, pass.name, pass.id, tostring(price or "N/A")), 33023)
+                        myGold = getAccountGold()
+                    else
+                        -- Stop here so we preserve the strict priority order
+                        break
+                    end
+                else
+                    -- Not enough gold for current priority pass; hold here until gold is earned
+                    break
+                end
             end
         end
-    end
-end)
+
+        isBuyingPasses = false
+    end)
+end
 
 -- ========================================================================
---  UNIVERSAL AUTO-SELL ENGINE (FIXED FOR BOTH CARRY & ALL ALTS)
+--  UNIVERSAL AUTO-SELL ENGINE (FIXED FOR BOSS RAID ITEMS & TRASHES)
 -- ========================================================================
-local knownInventoryKeys = {}
-local initialScanComplete = false
+local function shouldSellItem(category, itemKey, item)
+    if not item or type(item) ~= "table" then return false, "INVALID" end
 
-local function isItemProtectedFromSell(category, itemName, rarity, isEquipped, itemLevelReq)
-    if isEquipped then return true end
+    local name = tostring(item.name or item.displayName or itemKey)
+    local nameLower = name:lower()
+    local rarityLower = tostring(item.rarity or "common"):lower()
+    local itemLvl = tonumber(item.levelReq) or tonumber(item.level) or 0
+    local isEquipped = (typeof(item.equipped) == "table" and (item.equipped.q or item.equipped.e)) or (item.equipped == true)
 
-    -- High-Tier Purple Collectibles (Eldenbark, Valhalla) ALWAYS 100% PROTECTED
-    local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(itemName)
-    if isCollect and isHighTier then return true end
-    if (category == "chest" or category == "helmet") and isCollect then return true end
+    -- 1. EQUIPPED: 100% NEVER SELL
+    if isEquipped then return false, "EQUIPPED" end
 
-    -- Special Event Items (EIF, EIR, Eye of Inferno) ALWAYS 100% PROTECTED
-    if isSpecialEventItem(itemName) then return true end
+    -- 2. SPECIAL EVENT ITEMS: 100% NEVER SELL
+    if isSpecialEventItem(name) then return false, "SPECIAL_EVENT" end
 
-    local rLower = rarity and rarity:lower() or "common"
-    local lvl = tonumber(itemLevelReq) or 0
+    -- 3. HIGH-TIER PURPLE COLLECTS (Eldenbark, Valhalla): 100% NEVER SELL
+    local isCollect, collectPrefix, collectSource, isHighTier = isPurpleCollect(name)
+    if isCollect and isHighTier then return false, "HIGH_TIER_COLLECT" end
 
-    -- Endgame Gear (Level 145+ Legendary, Mythic, Ultimate) 100% PROTECTED
-    if lvl >= 145 and (rLower == "legendary" or rLower == "ultimate" or rLower == "mythic") then
-        return true
+    -- 4. PURPLE COLLECT ARMOR (Chests & Helmets from standard dungeons): 100% NEVER SELL
+    if (category == "chest" or category == "helmet") and isCollect then
+        return false, "PURPLE_COLLECT_ARMOR"
     end
 
-    -- Abilities below Legendary 145+ are sold
-    if category == "ability" then
-        if lvl >= 145 and (rLower == "legendary" or rLower == "ultimate" or rLower == "mythic") then
-            return true
-        end
-        return false
+    -- 5. ENDGAME GEAR (Level 145+ Legendary, Mythic, Ultimate from Orbital, Volcanic, Aquatic, EF, NL): 100% NEVER SELL
+    if itemLvl >= 145 and (rarityLower == "legendary" or rarityLower == "ultimate" or rarityLower == "mythic") then
+        return false, "ENDGAME_LEGENDARY"
     end
 
-    -- Weapons below Level 145 or non-high tier collects are sold
-    if category == "weapon" then
-        if lvl >= 145 and (rLower == "legendary" or rLower == "ultimate" or rLower == "mythic") then
-            return true
-        end
-        return false
+    -- 6. BOSS RAID DROPS:
+    -- Identification rule: Items have "+[tier]" in their name (e.g. "+21", "+30", "Nature Spellblade +29") or are Level 130
+    local isBossRaidTier = name:match("%+%s*%d+") ~= nil
+    local isBossRaidKeyword = nameLower:find("raid") or nameLower:find("boss raid") or nameLower:find("tier")
+
+    if isBossRaidTier or isBossRaidKeyword or itemLvl == 130 then
+        -- SELL ALL unequipped boss raid items (weapons, abilities, armors) of ANY rarity!
+        return true, "BOSS_RAID_JUNK"
     end
 
-    -- Armors: Purple collects from any dungeon kept, non-collect non-endgame sold
-    if category == "chest" or category == "helmet" then
-        if lvl >= 145 and (rLower == "legendary" or rLower == "ultimate" or rLower == "mythic") then
-            return true
-        end
-        return false
+    -- 7. PROGRESSION TRASH (Any unequipped item below Level 145 not protected above):
+    if itemLvl < 145 then
+        return true, "PROGRESSION_TRASH"
     end
 
-    return false
+    -- 8. High level non-legendary gear (Common, Uncommon, Rare, Epic)
+    if rarityLower ~= "legendary" and rarityLower ~= "ultimate" and rarityLower ~= "mythic" then
+        return true, "HIGH_LEVEL_TRASH"
+    end
+
+    return false, "SAFETY_KEEP"
 end
 
 local function executeUniversalAutoSell()
-    if not Config.AutoSellTrashes or not reloadInvyRemote or not sellItemEventRemote then return end
+    if not Config.AutoSellTrashes or not reloadInvyRemote or not sellItemEventRemote then return 0 end
 
-    -- 1. Inventory refresh sync call to ensure newly dropped items are indexed
+    -- 1. Refresh inventory cache
     local ok, inv = pcall(function() return reloadInvyRemote:InvokeServer() end)
-    if not ok or type(inv) ~= "table" then return end
+    if not ok or type(inv) ~= "table" then return 0 end
 
-    local itemsToSell = { weapon = {}, ability = {}, chest = {}, helmet = {} }
+    local payload = { weapon = {}, ability = {}, chest = {}, helmet = {} }
     local totalSold = 0
 
-    local function scanCategory(category, tbl, keyPrefix)
+    local function scan(catKey, tbl)
         if type(tbl) ~= "table" then return end
-        for key, item in pairs(tbl) do
-            local itemKey = tostring(key)
-            local isEquipped = (typeof(item.equipped) == "table" and (item.equipped.q or item.equipped.e)) or (item.equipped == true)
-            local rarity = item.rarity and item.rarity:lower() or "common"
-            local itemName = item.name or item.displayName or itemKey
-            local itemLvl = item.levelReq or item.level or 0
-
-            local protected = isItemProtectedFromSell(category, itemName, rarity, isEquipped, itemLvl)
-
-            if not protected then
-                local idNum = tonumber(string.sub(itemKey, #keyPrefix + 1)) or tonumber(string.match(itemKey, "%d+"))
+        for k, v in pairs(tbl) do
+            local canSell, reason = shouldSellItem(catKey, tostring(k), v)
+            if canSell then
+                local idNum = tonumber(string.match(tostring(k), "%d+"))
                 if idNum then
-                    table.insert(itemsToSell[category], idNum)
+                    table.insert(payload[catKey], idNum)
                     totalSold = totalSold + 1
                 end
             end
         end
     end
 
-    scanCategory("weapon", inv.weapons, "weapon_")
-    scanCategory("ability", inv.abilities, "ability_")
-    scanCategory("chest", inv.chests, "chest_")
-    scanCategory("helmet", inv.helmets, "helmet_")
+    scan("weapon", inv.weapons)
+    scan("ability", inv.abilities)
+    scan("chest", inv.chests)
+    scan("helmet", inv.helmets)
 
     if totalSold > 0 then
-        pcall(function() sellItemEventRemote:FireServer(itemsToSell) end)
-        print(string.format("[%s] 💰 Auto-Sold %d items! Gold Balance: %s (Collects & Endgame 145+ 100%% SAFE)",
+        pcall(function() sellItemEventRemote:FireServer(payload) end)
+        print(string.format("[%s] 💰 Auto-Sold %d items (Boss Raid Loot & Trashes Liquidated)! Current Gold: %s",
             LocalPlayer.Name, totalSold, tostring(getAccountGold())))
+        task.wait(0.5)
+        -- Immediately attempt sequential gamepass purchases with newly acquired gold!
+        executeSequentialGamepassBuyer()
     end
+
+    return totalSold
 end
 
--- Periodic Inventory Seed
+-- Initial auto-sell & gamepass check on boot
 task.spawn(function()
     task.wait(2.0)
-    if reloadInvyRemote then
-        pcall(function() reloadInvyRemote:InvokeServer() end)
+    print("[Maki Auto-Sell 🚀] Initial sweep on script boot...")
+    executeUniversalAutoSell()
+    task.wait(0.5)
+    executeSequentialGamepassBuyer()
+end)
+
+-- Continuous 6-second background auto-sell & gamepass buyer loop
+task.spawn(function()
+    while _G.MAKI_FULLY_AUTOMATED_RUNNING do
+        task.wait(6.0)
+        pcall(function()
+            executeUniversalAutoSell()
+            executeSequentialGamepassBuyer()
+        end)
     end
 end)
 
@@ -1355,6 +1355,18 @@ local function isMatchFinished()
     if finished and finished:IsA("BoolValue") and finished.Value == true then
         return true, "victory"
     end
+
+    -- Check completion GUIs in PlayerGui
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        for _, name in ipairs({"dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "ReplayDungeonButton"}) do
+            local g = pG:FindFirstChild(name)
+            if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
+                return true, "victory"
+            end
+        end
+    end
+
     return false, "active"
 end
 
@@ -1432,17 +1444,8 @@ task.spawn(function()
                     local lowestLvl, altName = getLowestAltLevel()
                     local currentLadder = getOptimalDungeonForAlts()
 
-                    -- Checkpoint 145 Promotion Check
-                    if lowestLvl >= 145 and not Config.Checkpoint145Completed then
-                        print("[Maki Checkpoint 🌟] Level 145 reached! Executing Checkpoint 145 liquidation & return...")
-                        executeCheckpoint145Purchases()
-                        if isCarry then returnPartyToLobby() end
-                    -- Checkpoint 154 Promotion Check
-                    elseif lowestLvl >= 154 and not Config.Checkpoint154Completed then
-                        print("[Maki Checkpoint 🌟] Level 154 reached! Executing Checkpoint 154 VIP & Stat Reset...")
-                        if isCarry then returnPartyToLobby() end
-                    -- Standard Promotion to Next Dungeon Check
-                    elseif Config.AutoProgression and (currentLadder.dungeon ~= Config.CurrentDungeon or currentLadder.diff ~= Config.CurrentDiff) then
+                    -- Check if promotion to next stage is needed
+                    if Config.AutoProgression and (currentLadder.dungeon ~= Config.CurrentDungeon or currentLadder.diff ~= Config.CurrentDiff) then
                         print(string.format("[Maki Progression] 🎉 %s reached Level %d! Promoting to %s (%s)...",
                             altName, lowestLvl, currentLadder.dungeon, currentLadder.diff))
                         if isCarry then returnPartyToLobby() end
@@ -1481,14 +1484,8 @@ task.spawn(function()
             currentWpIndex = 1
             mhcCurrentIndex = 1
 
-            -- Checkpoint Handlers in Lobby
-            local lowestLvl = getLowestAltLevel()
-            if lowestLvl >= 145 and not Config.Checkpoint145Completed then
-                executeCheckpoint145Purchases()
-            end
-            if lowestLvl >= 154 and not Config.Checkpoint154Completed then
-                executeCheckpoint154PurchasesAndReset()
-            end
+            -- Checkpoint & Gamepass Purchases in Lobby
+            executeSequentialGamepassBuyer()
 
             -- Carry Lobby Host Loop
             if isCarry and not isCreatingLobby then
@@ -1524,8 +1521,8 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = getGuiParent()
 
 local frame = Instance.new("Frame", screenGui)
-frame.Size = UDim2.new(0, 310, 0, 300)
-frame.Position = UDim2.new(0, 20, 0.5, -150)
+frame.Size = UDim2.new(0, 310, 0, 305)
+frame.Position = UDim2.new(0, 20, 0.5, -152)
 frame.BackgroundColor3 = Color3.fromRGB(15, 18, 28)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -1583,19 +1580,19 @@ tabDiscordBtn.Text = "💬 DISCORD"
 Instance.new("UICorner", tabDiscordBtn).CornerRadius = UDim.new(0, 4)
 
 local pageDashboard = Instance.new("Frame", frame)
-pageDashboard.Size = UDim2.new(1, -16, 0, 242)
+pageDashboard.Size = UDim2.new(1, -16, 0, 246)
 pageDashboard.Position = UDim2.new(0, 8, 0, 52)
 pageDashboard.BackgroundTransparency = 1
 pageDashboard.Visible = true
 
 local pageAlts = Instance.new("Frame", frame)
-pageAlts.Size = UDim2.new(1, -16, 0, 242)
+pageAlts.Size = UDim2.new(1, -16, 0, 246)
 pageAlts.Position = UDim2.new(0, 8, 0, 52)
 pageAlts.BackgroundTransparency = 1
 pageAlts.Visible = false
 
 local pageDiscord = Instance.new("Frame", frame)
-pageDiscord.Size = UDim2.new(1, -16, 0, 242)
+pageDiscord.Size = UDim2.new(1, -16, 0, 246)
 pageDiscord.Position = UDim2.new(0, 8, 0, 52)
 pageDiscord.BackgroundTransparency = 1
 pageDiscord.Visible = false
@@ -1719,13 +1716,35 @@ local function createToggle(name, yPos, getConfig, setConfig)
 end
 
 createToggle("🚀 AUTO PROGRESSION (LADDER 33-165+)", 120, function() return Config.AutoProgression end, function(v) Config.AutoProgression = v end)
-createToggle("💰 AUTO-SELL ALL TRASHES (COLLECTS SAFE)", 144, function() return Config.AutoSellTrashes end, function(v) Config.AutoSellTrashes = v end)
-createToggle("🛒 AUTO-BUY GAMEPASSES (145 & 154)", 168, function() return Config.AutoBuyGamepasses end, function(v) Config.AutoBuyGamepasses = v end)
-createToggle("🔄 AUTO STAT RESET AT 154", 192, function() return Config.AutoStatReset end, function(v) Config.AutoStatReset = v end)
+createToggle("💰 AUTO-SELL ALL TRASHES & RAID JUNK", 144, function() return Config.AutoSellTrashes end, function(v) Config.AutoSellTrashes = v end)
+createToggle("🛒 AUTO-BUY PASSES (2xGold ➔ Drops ➔ VIP ➔ Reset)", 168, function() return Config.AutoBuyGamepasses end, function(v) Config.AutoBuyGamepasses = v end)
+
+-- Instant Force Sell & Buy Passes Button
+local forceSellBtn = Instance.new("TextButton", pageDashboard)
+forceSellBtn.Size = UDim2.new(1, 0, 0, 22)
+forceSellBtn.Position = UDim2.new(0, 0, 0, 194)
+forceSellBtn.BackgroundColor3 = Color3.fromRGB(180, 80, 20)
+forceSellBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+forceSellBtn.TextSize = 8
+forceSellBtn.Font = Enum.Font.GothamBold
+forceSellBtn.Text = "💰 FORCE SELL ALL RAID ITEMS & BUY PASSES"
+Instance.new("UICorner", forceSellBtn).CornerRadius = UDim.new(0, 4)
+
+forceSellBtn.Activated:Connect(function()
+    forceSellBtn.Text = "⏳ SELLING INVENTORY..."
+    task.spawn(function()
+        local sold = executeUniversalAutoSell()
+        task.wait(0.5)
+        executeSequentialGamepassBuyer()
+        forceSellBtn.Text = string.format("✅ SOLD %d ITEMS & CHECKED PASSES!", sold)
+        task.wait(2.0)
+        forceSellBtn.Text = "💰 FORCE SELL ALL RAID ITEMS & BUY PASSES"
+    end)
+end)
 
 local manualActionBtn = Instance.new("TextButton", pageDashboard)
 manualActionBtn.Size = UDim2.new(1, 0, 0, 22)
-manualActionBtn.Position = UDim2.new(0, 0, 0, 216)
+manualActionBtn.Position = UDim2.new(0, 0, 0, 220)
 manualActionBtn.BackgroundColor3 = isCarry and Color3.fromRGB(0, 140, 200) or Color3.fromRGB(120, 60, 200)
 manualActionBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 manualActionBtn.TextSize = 8
@@ -1739,6 +1758,7 @@ manualActionBtn.Activated:Connect(function()
     else
         executeInstantReadyUp()
         executeUniversalAutoSell()
+        executeSequentialGamepassBuyer()
     end
 end)
 
@@ -1898,4 +1918,4 @@ task.spawn(function()
     end
 end)
 
-print("[Project Maki] 👑 Fully Automated Progression & Gamepass Suite v1.0 Loaded Successfully!")
+print("[Project Maki] 👑 Fully Automated Progression & Gamepass Suite v1.1 Loaded Successfully!")
