@@ -165,6 +165,37 @@ local function safeWriteFile(fileName, content)
 end
 
 -- ========================================================================
+--  AUTO-DOWNLOAD & VERIFY RECORDED MAP PATHWAYS (11 MAPS)
+-- ========================================================================
+local GITHUB_BASE = "https://raw.githubusercontent.com/MayyAlterrr/maki-suite/main/"
+local REQUIRED_MAPS = {
+    "dqr_map_winter_outpost.json",
+    "dqr_map_pirate_island.json",
+    "dqr_map_kings_castle.json",
+    "dqr_map_the_underworld.json",
+    "dqr_map_samurai_palace.json",
+    "dqr_map_the_canals.json",
+    "dqr_map_ghastly_harbor.json",
+    "dqr_map_steampunk_sewers.json",
+    "dqr_highway_orbital_outpost.json",
+    "dqr_highway_volcanic_chambers.json",
+    "dqr_highway_aquatic_temple.json"
+}
+
+for _, f in ipairs(REQUIRED_MAPS) do
+    if not safeIsFile(f) then
+        pcall(function()
+            if typeof(writefile) == "function" then
+                local content = game:HttpGet(GITHUB_BASE .. f)
+                if content and #content > 50 then
+                    writefile(f, content)
+                end
+            end
+        end)
+    end
+end
+
+-- ========================================================================
 --  CONFIG & PERSISTENCE (dqr_party_config.json)
 -- ========================================================================
 local ConfigFileName = "dqr_party_config.json"
@@ -904,14 +935,26 @@ local wpArrivalDist = 8.0
 
 local function loadWaypointsForDungeon(slug)
     local fileName = "dqr_map_" .. slug .. ".json"
-    if not safeIsFile(fileName) then return false end
+    if not safeIsFile(fileName) then
+        pcall(function()
+            if typeof(writefile) == "function" then
+                local content = game:HttpGet(GITHUB_BASE .. fileName)
+                if content and #content > 50 then
+                    writefile(fileName, content)
+                end
+            end
+        end)
+    end
+
     local raw = safeReadFile(fileName)
     if not raw then return false end
     local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
-    if ok and type(parsed) == "table" and #parsed > 0 then
-        currentWaypoints = parsed
+    local points = (ok and parsed and (parsed.points or parsed))
+    if type(points) == "table" and #points > 0 then
+        currentWaypoints = points
         currentLoadedMapSlug = slug
         currentWpIndex = 1
+        print(string.format("[Maki Path Engine 🗺️] Successfully loaded %d waypoints for %s!", #points, slug))
         return true
     end
     return false
@@ -1021,14 +1064,26 @@ local mhcCurrentIndex = 1
 
 local function loadHighwayForDungeon(slug)
     local fileName = "dqr_highway_" .. slug .. ".json"
-    if not safeIsFile(fileName) then return false end
+    if not safeIsFile(fileName) then
+        pcall(function()
+            if typeof(writefile) == "function" then
+                local content = game:HttpGet(GITHUB_BASE .. fileName)
+                if content and #content > 50 then
+                    writefile(fileName, content)
+                end
+            end
+        end)
+    end
+
     local raw = safeReadFile(fileName)
     if not raw then return false end
     local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
-    if ok and type(parsed) == "table" and #parsed > 0 then
-        currentHighwayWps = parsed
+    local points = (ok and parsed and (parsed.points or parsed))
+    if type(points) == "table" and #points > 0 then
+        currentHighwayWps = points
         currentLoadedHighwaySlug = slug
         mhcCurrentIndex = 1
+        print(string.format("[Maki MHC Engine 🛣️] Successfully loaded %d highway nodes for %s!", #points, slug))
         return true
     end
     return false
