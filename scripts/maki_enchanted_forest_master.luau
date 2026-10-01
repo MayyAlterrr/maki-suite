@@ -345,12 +345,13 @@ local function checkAndTriggerDisconnect(rawReason)
 
     local reasonLower = string.lower(reason)
 
-    -- 1. IGNORE normal server transitions and intentional teleport disconnects:
+    -- 1. IGNORE any message containing client, initiate, teleport, or rejoin:
     -- Roblox assigns 'DisconnectClientInitiated' whenever the client itself leaves to teleport to a new server
-    if reasonLower:find("clientinitiated") 
+    if reasonLower:find("client") 
+       or reasonLower:find("initiate") 
        or reasonLower:find("teleport") 
        or reasonLower:find("rejoin") then
-        print("[EF Master Disconnect] Ignored normal teleport/transition: " .. reason)
+        print("[EF Master Disconnect] Ignored benign transition: " .. reason)
         return
     end
 
@@ -360,7 +361,7 @@ local function checkAndTriggerDisconnect(rawReason)
         return
     end
 
-    -- 3. IGNORE victory server termination (when dungeon is finished and shutting down)
+    -- 3. IGNORE any disconnect if the dungeon is finished / boss defeated:
     local isFinished = false
     pcall(function()
         local dung = Workspace:FindFirstChild("dungeon")
@@ -370,7 +371,7 @@ local function checkAndTriggerDisconnect(rawReason)
             isFinished = true
         end
     end)
-    if isFinished and (reasonLower:find("shut down") or reasonLower:find("closed") or reasonLower:find("connection")) then
+    if isFinished then
         print("[EF Master Disconnect] Ignored victory server termination: " .. reason)
         return
     end
