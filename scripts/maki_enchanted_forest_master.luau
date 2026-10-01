@@ -311,12 +311,12 @@ local function sendDiscordDisconnectAlert(errorMessage)
     end)
 end
 
+local isReplaying = false
 local hasSentDisconnectAlert = false
 
 local function checkAndTriggerDisconnect(rawReason)
     if not currentSettings.disconnectNotify then return end
     if hasSentDisconnectAlert then return end
-    hasSentDisconnectAlert = true
 
     local reason = rawReason
     if not reason or reason == "" then
@@ -341,11 +341,42 @@ local function checkAndTriggerDisconnect(rawReason)
         end)
     end
 
-    if not reason or reason == "" then
-        reason = "Disconnected from game server (Unknown Error)"
+    if not reason or reason == "" then return end
+
+    local reasonLower = string.lower(reason)
+
+    -- 1. IGNORE normal server transitions and intentional teleport disconnects:
+    -- Roblox assigns 'DisconnectClientInitiated' whenever the client itself leaves to teleport to a new server
+    if reasonLower:find("clientinitiated") 
+       or reasonLower:find("teleport") 
+       or reasonLower:find("rejoin") then
+        print("[EF Master Disconnect] Ignored normal teleport/transition: " .. reason)
+        return
     end
 
-    print("[EF Master Disconnect] 🚨 Triggered! Sending Discord alert for: " .. tostring(reason))
+    -- 2. IGNORE server disconnects during active replay
+    if isReplaying then
+        print("[EF Master Disconnect] Ignored disconnect during active replay: " .. reason)
+        return
+    end
+
+    -- 3. IGNORE victory server termination (when dungeon is finished and shutting down)
+    local isFinished = false
+    pcall(function()
+        local dung = Workspace:FindFirstChild("dungeon")
+        local br = dung and dung:FindFirstChild("bossRoom")
+        local df = br and br:FindFirstChild("dungeonFinished")
+        if df and df:IsA("BoolValue") and df.Value == true then
+            isFinished = true
+        end
+    end)
+    if isFinished and (reasonLower:find("shut down") or reasonLower:find("closed") or reasonLower:find("connection")) then
+        print("[EF Master Disconnect] Ignored victory server termination: " .. reason)
+        return
+    end
+
+    hasSentDisconnectAlert = true
+    print("[EF Master Disconnect] 🚨 Genuine Crash / Disconnect Detected: " .. tostring(reason))
     sendDiscordDisconnectAlert(reason)
 end
 
@@ -392,7 +423,7 @@ local autoSell = currentSettings.autoSell
 
 
 
-local isReplaying = false
+-- isReplaying declared earlier
 
 
 
