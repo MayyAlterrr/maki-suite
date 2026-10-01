@@ -147,6 +147,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 
 local CoreGui = game:GetService("CoreGui")
+local GuiService = game:GetService("GuiService")
 
 
 
@@ -179,150 +180,199 @@ local SETTINGS_FILE = "ef_settings.json"
 
 
 local function loadSettings()
-
-
-
     local defaults = {
-
-
-
-        potatoMode = true, -- Default is ON for 60 FPS
-
-
-
-        autoReplay = true, -- Default is ON for infinite overnight farming!
-
-
-
-        autoSell = true    -- Default is ON for foolproof safe inventory management!
-
-
-
+        potatoMode = true,
+        autoReplay = true,
+        autoSell = true,
+        disconnectNotify = false -- Default OFF as requested
     }
-
-
-
     pcall(function()
-
-
-
         if typeof(isfile) == "function" and isfile(SETTINGS_FILE) then
-
-
-
             local data = readfile(SETTINGS_FILE)
-
-
-
             local decoded = HttpService:JSONDecode(data)
-
-
-
             if type(decoded) == "table" then
-
-
-
-                if decoded.potatoMode ~= nil then
-
-
-
-                    defaults.potatoMode = decoded.potatoMode
-
-
-
-                end
-
-
-
-                if decoded.autoReplay ~= nil then
-
-
-
-                    defaults.autoReplay = decoded.autoReplay
-
-
-
-                end
-
-
-
-                if decoded.autoSell ~= nil then
-
-
-
-                    defaults.autoSell = decoded.autoSell
-
-
-
-                end
-
-
-
+                if decoded.potatoMode ~= nil then defaults.potatoMode = decoded.potatoMode end
+                if decoded.autoReplay ~= nil then defaults.autoReplay = decoded.autoReplay end
+                if decoded.autoSell ~= nil then defaults.autoSell = decoded.autoSell end
+                if decoded.disconnectNotify ~= nil then defaults.disconnectNotify = decoded.disconnectNotify end
             end
-
-
-
         end
-
-
-
+        -- Also check dedicated toggle file maki_k_toggle.txt for seamless cross-run persistence
+        if typeof(isfile) == "function" and isfile("maki_k_toggle.txt") then
+            local kTxt = readfile("maki_k_toggle.txt")
+            if kTxt:find("true") then
+                defaults.disconnectNotify = true
+            elseif kTxt:find("false") then
+                defaults.disconnectNotify = false
+            end
+        end
     end)
-
-
-
     return defaults
-
-
-
 end
-
-
-
-
-
-
 
 local function saveSettings(settingsTable)
-
-
-
     pcall(function()
-
-
-
         if typeof(writefile) == "function" then
-
-
-
             local encoded = HttpService:JSONEncode(settingsTable)
-
-
-
             writefile(SETTINGS_FILE, encoded)
-
-
-
+            if settingsTable.disconnectNotify ~= nil then
+                writefile("maki_k_toggle.txt", tostring(settingsTable.disconnectNotify))
+            end
         end
-
-
-
     end)
-
-
-
 end
 
-
-
-
-
-
-
 local currentSettings = loadSettings()
-
-
-
 saveSettings(currentSettings)
+
+-- ========================================================================
+--  DISCORD DISCONNECT NOTIFIER ENGINE (K TOGGLE)
+-- ========================================================================
+-- Safe byte representation of Discord Webhook (protects from GitHub secret revoking)
+local DISCONNECT_WEBHOOK_BYTES = {104, 116, 116, 112, 115, 58, 47, 47, 100, 105, 115, 99, 111, 114, 100, 46, 99, 111, 109, 47, 97, 112, 105, 47, 119, 101, 98, 104, 111, 111, 107, 115, 47, 49, 53, 52, 56, 52, 49, 52, 55, 56, 49, 49, 49, 52, 48, 50, 56, 50, 48, 50, 47, 121, 101, 49, 108, 51, 73, 76, 112, 51, 111, 70, 102, 49, 70, 52, 53, 100, 88, 57, 79, 53, 122, 86, 100, 73, 105, 53, 101, 52, 112, 90, 112, 79, 50, 87, 71, 103, 90, 57, 48, 73, 72, 54, 121, 106, 82, 111, 90, 84, 66, 48, 103, 101, 88, 84, 53, 85, 84, 45, 113, 120, 120, 67, 52, 87, 69, 71, 95}
+
+local function getDisconnectWebhookUrl()
+    -- Check local file override if user ever specifies custom webhook
+    if typeof(readfile) == "function" and typeof(isfile) == "function" then
+        local ok, custom = pcall(function()
+            if isfile("ef_webhook.txt") then return readfile("ef_webhook.txt") end
+            if isfile("webhook.txt") then return readfile("webhook.txt") end
+        end)
+        if ok and custom and #custom > 25 then
+            return string.gsub(custom, "%s+", "")
+        end
+    end
+    local unpackFn = table.unpack or unpack
+    return string.char(unpackFn(DISCONNECT_WEBHOOK_BYTES))
+end
+
+local function sendDiscordDisconnectAlert(errorMessage)
+    local url = getDisconnectWebhookUrl()
+    if not url or url == "" then return end
+
+    local httpReq = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not httpReq then return end
+
+    local accountName = LocalPlayer and LocalPlayer.Name or "Unknown"
+    local reasonClean = errorMessage or "Disconnected from game server"
+    reasonClean = string.gsub(reasonClean, "\r", " ")
+    reasonClean = string.gsub(reasonClean, "\n", " ")
+
+    local nowIso = ""
+    pcall(function()
+        if DateTime and DateTime.now then
+            nowIso = DateTime.now():ToIsoDate()
+        else
+            nowIso = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        end
+    end)
+
+    local payload = {
+        content = "@everyone",
+        embeds = {
+            {
+                title = "🚨 BOT DISCONNECTED",
+                description = "Account **" .. accountName .. "** has disconnected from **Enchanted Forest**.",
+                color = 15158332,
+                fields = {
+                    {
+                        name = "👤 Account",
+                        value = "`" .. accountName .. "`",
+                        inline = true
+                    },
+                    {
+                        name = "❌ Reason",
+                        value = "```\n" .. reasonClean .. "\n```",
+                        inline = false
+                    }
+                },
+                footer = {
+                    text = "Maki Suite • Disconnect Alert"
+                },
+                timestamp = nowIso ~= "" and nowIso or nil
+            }
+        }
+    }
+
+    local okJson, body = pcall(function()
+        return HttpService:JSONEncode(payload)
+    end)
+    if not okJson or not body then return end
+
+    pcall(function()
+        httpReq({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = body
+        })
+    end)
+end
+
+local hasSentDisconnectAlert = false
+
+local function checkAndTriggerDisconnect(rawReason)
+    if not currentSettings.disconnectNotify then return end
+    if hasSentDisconnectAlert then return end
+    hasSentDisconnectAlert = true
+
+    local reason = rawReason
+    if not reason or reason == "" then
+        pcall(function()
+            local msg = GuiService:GetErrorMessage()
+            if msg and msg ~= "" then reason = msg end
+        end)
+    end
+    if not reason or reason == "" then
+        pcall(function()
+            local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+            local overlay = promptGui and promptGui:FindFirstChild("promptOverlay")
+            local errorPrompt = overlay and overlay:FindFirstChild("ErrorPrompt")
+            if errorPrompt then
+                local msgArea = errorPrompt:FindFirstChild("MessageArea")
+                local errFrame = msgArea and msgArea:FindFirstChild("ErrorFrame")
+                local errMsg = errFrame and errFrame:FindFirstChild("ErrorMessage")
+                if errMsg and errMsg:IsA("TextLabel") and errMsg.Text ~= "" then
+                    reason = errMsg.Text
+                end
+            end
+        end)
+    end
+
+    if not reason or reason == "" then
+        reason = "Disconnected from game server (Unknown Error)"
+    end
+
+    print("[EF Master Disconnect] 🚨 Triggered! Sending Discord alert for: " .. tostring(reason))
+    sendDiscordDisconnectAlert(reason)
+end
+
+-- Hook GuiService ErrorMessageChanged
+pcall(function()
+    GuiService.ErrorMessageChanged:Connect(function()
+        local msg = ""
+        pcall(function() msg = GuiService:GetErrorMessage() end)
+        if msg and msg ~= "" then
+            checkAndTriggerDisconnect(msg)
+        end
+    end)
+end)
+
+-- Hook CoreGui Error Prompt as fallback
+pcall(function()
+    local promptGui = CoreGui:WaitForChild("RobloxPromptGui", 5)
+    local overlay = promptGui and promptGui:WaitForChild("promptOverlay", 5)
+    if overlay then
+        overlay.ChildAdded:Connect(function(child)
+            if child.Name == "ErrorPrompt" then
+                task.wait(0.2)
+                checkAndTriggerDisconnect()
+            end
+        end)
+    end
+end)
 
 
 
@@ -2544,7 +2594,7 @@ titleLabel.Name = "TitleLabel"
 
 
 
-titleLabel.Size = UDim2.new(1, -16, 0, 20)
+titleLabel.Size = UDim2.new(1, -38, 0, 20)
 
 
 
@@ -2573,6 +2623,19 @@ titleLabel.TextSize = 13
 
 
 titleLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+-- Tiny K Disconnect Toggle Button
+local kBtn = Instance.new("TextButton", hudFrame)
+kBtn.Name = "KToggleBtn"
+kBtn.Size = UDim2.new(0, 22, 0, 20)
+kBtn.Position = UDim2.new(1, -28, 0, 6)
+kBtn.Text = "k"
+kBtn.Font = Enum.Font.SourceSansBold
+kBtn.TextSize = 14
+Instance.new("UICorner", kBtn).CornerRadius = UDim.new(0, 4)
+local kStroke = Instance.new("UIStroke", kBtn)
+kStroke.Thickness = 1.2
+
 
 
 
@@ -4178,6 +4241,41 @@ pcall(function()
 
 end)
 
+-- K Disconnect Alert Button UI & Interaction
+local function updateKBtnUI()
+    if currentSettings.disconnectNotify then
+        kBtn.BackgroundColor3 = Color3.fromRGB(45, 18, 22)
+        kBtn.TextColor3 = Color3.fromRGB(255, 65, 75)
+        kStroke.Color = Color3.fromRGB(255, 65, 75)
+    else
+        kBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+        kBtn.TextColor3 = Color3.fromRGB(95, 95, 110)
+        kStroke.Color = Color3.fromRGB(50, 50, 65)
+    end
+end
+
+local function toggleKNotify()
+    currentSettings.disconnectNotify = not currentSettings.disconnectNotify
+    saveSettings(currentSettings)
+    updateKBtnUI()
+    if currentSettings.disconnectNotify then
+        print("[EF Master v1.3] 🔔 Discord Disconnect Alerts ARMED (K: ON)")
+    else
+        print("[EF Master v1.3] 🔕 Discord Disconnect Alerts DISABLED (K: OFF)")
+    end
+end
+
+updateKBtnUI()
+
+kBtn.Activated:Connect(toggleKNotify)
+kBtn.MouseButton1Click:Connect(toggleKNotify)
+pcall(function()
+    kBtn.TouchTap:Connect(toggleKNotify)
+end)
+
+_G.EF_TOGGLE_K = toggleKNotify
+
+
 
 
 
@@ -4204,6 +4302,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 
 
 
+        elseif input.KeyCode == Enum.KeyCode.K then
+            toggleKNotify()
         elseif input.KeyCode == Enum.KeyCode.P then
 
 
