@@ -68,7 +68,18 @@ end
 -- ========================================================================
 --  [1] CONFIGURATION & STATE
 -- ========================================================================
-local TARGET_HOST         = "WitchyOyster"
+local TARGET_HOST         = _G.TARGET_HOST or _G.TARGET_CARRY or "WitchyOyster"
+
+-- Auto-load saved host username if dqr_party_config.json exists
+pcall(function()
+    if typeof(readfile) == "function" and typeof(isfile) == "function" and isfile("dqr_party_config.json") then
+        local content = readfile("dqr_party_config.json")
+        local data = HttpService:JSONDecode(content)
+        if data and data.CarryUsername and #data.CarryUsername > 0 and not (_G.TARGET_HOST or _G.TARGET_CARRY) then
+            TARGET_HOST = data.CarryUsername
+        end
+    end
+end)
 local AutomationEnabled   = true
 local WhiteScreenEnabled  = true
 local LowFpsCap           = 15
@@ -852,6 +863,15 @@ HostBox.FocusLost:Connect(function()
     local text = HostBox.Text:match("^%s*(.-)%s*$")
     if text and #text > 0 then
         TARGET_HOST = text
+        _G.TARGET_HOST = text
+        pcall(function()
+            if typeof(readfile) == "function" and typeof(writefile) == "function" and typeof(isfile) == "function" and isfile("dqr_party_config.json") then
+                local content = readfile("dqr_party_config.json")
+                local data = HttpService:JSONDecode(content) or {}
+                data.CarryUsername = text
+                writefile("dqr_party_config.json", HttpService:JSONEncode(data))
+            end
+        end)
         print("[AltShit] 🎯 Target host updated to: " .. TARGET_HOST)
     end
 end)
