@@ -68,7 +68,7 @@ end
 -- ========================================================================
 --  [1] CONFIGURATION & STATE
 -- ========================================================================
-local TARGET_HOST         = _G.TARGET_HOST or _G.TARGET_CARRY or "WitchyOyster"
+local TARGET_HOST         = _G.TARGET_HOST or _G.TARGET_CARRY or "IloveSanjiMann"
 local AutomationEnabled   = true
 local WhiteScreenEnabled  = true
 local LowFpsCap           = 15
@@ -595,7 +595,7 @@ local WS_HostLbl = Instance.new("TextLabel")
 WS_HostLbl.Size = UDim2.new(1, -24, 0, 18)
 WS_HostLbl.Position = UDim2.new(0, 12, 0, 82)
 WS_HostLbl.BackgroundTransparency = 1
-WS_HostLbl.Text = "Host: WitchyOyster (Searching...)"
+WS_HostLbl.Text = "Host: IloveSanjiMann (Searching...)"
 WS_HostLbl.TextColor3 = Color3.fromRGB(100, 110, 135)
 WS_HostLbl.TextSize = 10
 WS_HostLbl.Font = Enum.Font.GothamMedium
