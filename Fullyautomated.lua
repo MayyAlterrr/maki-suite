@@ -98,7 +98,12 @@ local teleToLobbyRemote          = remotes and (remotes:FindFirstChild("teleToLo
 local announceDropRemote         = remotes and remotes:FindFirstChild("AnnounceDrop")
 local createBossLobbyRemote      = remotes and (remotes:FindFirstChild("createBossLobby") or remotes:FindFirstChild("createRaidLobby"))
 local addPlayerToBossWhitelistRemote = remotes and (remotes:FindFirstChild("addPlayerToBossWhitelist") or remotes:FindFirstChild("addPlayerToRaidWhitelist"))
+local removePlayerFromBossWhitelistRemote = remotes and (remotes:FindFirstChild("removePlayerFromBossWhitelist") or remotes:FindFirstChild("removePlayerFromRaidWhitelist"))
+local playerJoinBossLobbyRemote  = remotes and (remotes:FindFirstChild("playerJoinBossLobby") or remotes:FindFirstChild("playerJoinRaidLobby"))
 local startBossRaidRemote        = remotes and (remotes:FindFirstChild("startBossRaid") or remotes:FindFirstChild("startRaid"))
+local leaveBossLobbyRemote       = remotes and (remotes:FindFirstChild("leaveBossLobby") or remotes:FindFirstChild("leaveRaidLobby"))
+local showReadyGuiRemote         = remotes and remotes:FindFirstChild("showReadyGui")
+local upgradeKeyRemote           = remotes and remotes:FindFirstChild("upgradeKey")
 local buyGamepassRemote          = remotes and (remotes:FindFirstChild("requestGoldGamepassPurchase") or remotes:FindFirstChild("buyGamepass") or remotes:FindFirstChild("purchaseGamepass") or remotes:FindFirstChild("buyGamepassGold") or remotes:FindFirstChild("buyPass"))
 local getGoldGamepassPriceRemote = remotes and remotes:FindFirstChild("getGoldGamepassPrice")
 local getGoldAmountRemote        = remotes and (remotes:FindFirstChild("getGoldAmount") or remotes:FindFirstChild("getGold"))
@@ -203,6 +208,7 @@ local Config = {
     AltFpsCap           = 12,
     CarryFpsCap         = 55,
     AutoBuyGamepasses   = true,
+    AutoReadyUp         = true,
     AutoNextTier        = true,
     CurrentTier         = 1
 }
@@ -228,6 +234,8 @@ local function loadConfig()
     if Config.Disable3dOnAlts == nil then Config.Disable3dOnAlts = true end
     if Config.NotifyCollects == nil then Config.NotifyCollects = true end
     if not Config.AltFpsCap then Config.AltFpsCap = 12 end
+    if Config.AutoReadyUp == nil then Config.AutoReadyUp = true end
+    if Config.AutoNextTier == nil then Config.AutoNextTier = true end
     Config.CarryFpsCap = 55
 end
 
@@ -678,6 +686,90 @@ local function getCurrentDungeonEngine()
 end
 
 -- ========================================================================
+--  UNIVERSAL AUTO-READY ENGINE (1:1 MATCH WITH MAKI BOSS RAID V3.1)
+-- ========================================================================
+local function areAllAltsPresent()
+    if not Config.AltUsernames or #Config.AltUsernames == 0 then return true end
+    local validAlts = {}
+    for _, name in ipairs(Config.AltUsernames) do
+        if type(name) == "string" and #name > 0 then
+            table.insert(validAlts, name)
+        end
+    end
+    if #validAlts == 0 then return true end
+
+    for _, altName in ipairs(validAlts) do
+        local cleanName = tostring(altName):gsub("%s+", ""):lower()
+        local found = false
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name:lower() == cleanName then
+                local char = p.Character
+                local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if char and hrp and hum then
+                    found = true
+                end
+                break
+            end
+        end
+        if not found then return false end
+    end
+    return true
+end
+
+local function executeInstantReadyUp()
+    if Config.AutoReadyUp == false or not isDungeon() then return end
+
+    -- If Carry, DO NOT ready up until ALL configured alts are inside the raid/dungeon room with loaded characters!
+    if isCarry and not areAllAltsPresent() then
+        return
+    end
+
+    if readyUpRemote then
+        pcall(function() readyUpRemote:FireServer() end)
+    end
+
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        for _, gui in ipairs(pG:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled then
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if desc:IsA("GuiButton") then
+                        local text = (desc:IsA("TextButton") and desc.Text or ""):lower()
+                        local name = desc.Name:lower()
+                        if text:find("ready") or name:find("ready") then
+                            pcall(function()
+                                for _, c in ipairs(getconnections(desc.Activated)) do c:Fire() end
+                                for _, c in ipairs(getconnections(desc.MouseButton1Click)) do c:Fire() end
+                                for _, c in ipairs(getconnections(desc.MouseButton1Down)) do c:Fire() end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+if showReadyGuiRemote then
+    showReadyGuiRemote.OnClientEvent:Connect(function()
+        task.spawn(executeInstantReadyUp)
+    end)
+end
+
+task.spawn(function()
+    while _G.MAKI_MASTER_SUITE_RUNNING do
+        task.wait(0.15)
+        if isDungeon() then
+            local prog = getDungeonProgress()
+            if prog == "playersnotready" or prog:find("ready") or (isCarry and areAllAltsPresent()) then
+                executeInstantReadyUp()
+            end
+        end
+    end
+end)
+
+-- ========================================================================
 --  [MODULE 1] DEATH AURA (COMBAT BURST ENGINE FOR 60-130)
 -- ========================================================================
 local function getAbilityTools()
@@ -836,6 +928,27 @@ local function isMatchUnlocked()
         return false
     end
 
+    local engine = getCurrentDungeonEngine()
+    if engine == "bossraid" then
+        if matchStartUnlockTime > 0 and os.clock() < matchStartUnlockTime then
+            return false
+        end
+        if matchStartUnlockTime > 0 and os.clock() >= matchStartUnlockTime then
+            return true
+        end
+        local pG = LocalPlayer:FindFirstChild("PlayerGui")
+        if pG then
+            local bQ = pG:FindFirstChild("bossQueueGui")
+            if bQ and bQ.Enabled then
+                local sBtn = bQ:FindFirstChild("lobbyInfo") and bQ.lobbyInfo:FindFirstChild("startButton", true)
+                if sBtn and sBtn.Visible then
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
     -- If in the middle of the 3.8s countdown buffer after clicking start, stay locked
     if matchStartUnlockTime > 0 and os.clock() < matchStartUnlockTime then
         return false
@@ -849,7 +962,7 @@ local function isMatchUnlocked()
     -- Before clicking start: if staging GUI exists, stay locked
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
     if pG then
-        local qG = pG and pG:FindFirstChild("queueGui")
+        local qG = pG and (pG:FindFirstChild("queueGui") or pG:FindFirstChild("bossQueueGui"))
         local sBtn = (pG and pG:FindFirstChild("startButton", true)) or (qG and qG:FindFirstChild("startButton", true))
         if (qG and qG.Enabled) or (sBtn and sBtn.Visible) then
             return false
@@ -913,41 +1026,111 @@ end)
 
 -- ========================================================================
 --  [MODULE 7] BOSS RAIDS FAST-TRACK ENGINE (LEVELS 130 - 144)
+--  1:1 MATCH WITH MAKI BOSS RAID V3.1 DEDICATED ENGINE
 -- ========================================================================
+local function findBossTarget()
+    local containers = {
+        Workspace:FindFirstChild("enemies"),
+        Workspace:FindFirstChild("boss"),
+        Workspace:FindFirstChild("dungeon"),
+        Workspace:FindFirstChild("Arena"),
+        Workspace
+    }
+
+    local function checkModel(obj)
+        if not obj or not obj:IsA("Model") or obj == LocalPlayer.Character then return nil end
+        local hum = obj:FindFirstChildOfClass("Humanoid")
+        local hrp = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") or obj:FindFirstChild("Torso")
+        if hum and hrp and hum.Health > 0 then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character == obj or p.Name == obj.Name then
+                    return nil
+                end
+            end
+            return obj, hrp, hum
+        end
+        return nil
+    end
+
+    for _, container in ipairs(containers) do
+        if container then
+            for _, child in ipairs(container:GetChildren()) do
+                local m, r, h = checkModel(child)
+                if m and r and h then return m, r, h end
+            end
+        end
+    end
+
+    for _, container in ipairs(containers) do
+        if container then
+            for _, desc in ipairs(container:GetDescendants()) do
+                local m, r, h = checkModel(desc)
+                if m and r and h then return m, r, h end
+            end
+        end
+    end
+
+    return nil, nil, nil
+end
+
+-- Continuous Arena Wall/Barrier Bypass
 task.spawn(function()
     while _G.MAKI_MASTER_SUITE_RUNNING do
-        task.wait(0.05)
         local engine = getCurrentDungeonEngine()
-        if engine == "bossraid" and isCarry and isDungeon() then
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-
-            if hrp and hum and hum.Health > 0 then
-                if not isMatchUnlocked() then
-                    hum:MoveTo(hrp.Position)
-                else
-                    local bossModel = nil
-                local enemiesFolder = Workspace:FindFirstChild("enemies") or Workspace:FindFirstChild("dungeon")
-                if enemiesFolder then
-                    for _, c in ipairs(enemiesFolder:GetChildren()) do
-                        local bHum = c:FindFirstChildOfClass("Humanoid")
-                        if bHum and bHum.Health > 0 then
-                            bossModel = c
-                            break
+        if isCarry and isDungeon() and engine == "bossraid" then
+            local dungeon = Workspace:FindFirstChild("dungeon") or Workspace
+            for _, desc in ipairs(dungeon:GetDescendants()) do
+                if desc:IsA("BasePart") then
+                    local pName = desc.Name:lower()
+                    local parName = desc.Parent and desc.Parent.Name:lower() or ""
+                    if pName:find("door") or pName:find("gate") or pName:find("barrier") or pName:find("blocker") or parName:find("doors") or parName:find("gates") or desc.Transparency >= 0.8 then
+                        if not pName:find("floor") and not pName:find("ground") and not pName:find("step") and not pName:find("stair") then
+                            desc.CanCollide = false
                         end
                     end
                 end
+            end
+        end
+        task.wait(1.5)
+    end
+end)
 
-                if bossModel then
-                    local bRoot = bossModel.PrimaryPart or bossModel:FindFirstChild("HumanoidRootPart") or bossModel:FindFirstChild("Head")
-                    if bRoot then
-                        local dir = (bRoot.Position - hrp.Position).Unit
-                        local standPos = bRoot.Position - (dir * 35.0)
-                        hum:MoveTo(standPos)
-                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bRoot.Position.X, hrp.Position.Y, bRoot.Position.Z))
+-- Continuous Boss Chasing & Movement Drive (1:1 with maki_boss_raid_v3.1.lua)
+task.spawn(function()
+    while _G.MAKI_MASTER_SUITE_RUNNING do
+        task.wait(0.03)
+        local engine = getCurrentDungeonEngine()
+        if isCarry and isDungeon() and engine == "bossraid" then
+            local myChar = LocalPlayer.Character
+            local myHrp  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+
+            if myHrp and myHum and myHum.Health > 0 then
+                if not isMatchUnlocked() then
+                    myHum:MoveTo(myHrp.Position)
+                else
+                    local bossModel, bossHrp, bossHum = findBossTarget()
+                    if bossHrp and bossHum and bossHum.Health > 0 then
+                        local myPos = myHrp.Position
+                        local bossPos = bossHrp.Position
+                        local toBoss = (bossPos - myPos)
+                        local dist = toBoss.Magnitude
+
+                        -- Continuously face the boss
+                        local flatLook = Vector3.new(toBoss.X, 0, toBoss.Z)
+                        if flatLook.Magnitude > 0.1 then
+                            myHrp.CFrame = CFrame.lookAt(myPos, Vector3.new(bossPos.X, myPos.Y, bossPos.Z))
+                        end
+
+                        -- Continuously drive character forward towards boss
+                        if dist > 3.5 then
+                            local walkDir = flatLook.Unit
+                            myHum:Move(walkDir, false)
+                            myHum:MoveTo(bossPos)
+                        else
+                            myHum:Move(Vector3.zero, false)
+                        end
                     end
-                end
                 end
             end
         end
@@ -1891,7 +2074,50 @@ local function areAllAltsInDungeon()
     return (loadedCount >= #altList), loadedCount, #altList
 end
 
+local function triggerCarryStartBossRaid()
+    if matchStartUnlockTime == 0 then
+        matchStartUnlockTime = os.clock() + 3.8
+        print("[Maki Staging 👑] Boss Raid Staging start triggered! Holding position for 3.8s countdown & barrier drop...")
+    end
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        local bQ = pG:FindFirstChild("bossQueueGui")
+        local sBtn = bQ and bQ:FindFirstChild("lobbyInfo") and bQ.lobbyInfo:FindFirstChild("startButton", true)
+        if sBtn then
+            pcall(function()
+                for _, c in ipairs(getconnections(sBtn.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn.MouseButton1Click)) do c:Fire() end
+                for _, c in ipairs(getconnections(sBtn.MouseButton1Down)) do c:Fire() end
+            end)
+        end
+        for _, btn in ipairs(pG:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                local bName = btn.Name:lower()
+                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
+                if bName:find("start") or bText:find("start") or bName:find("ready") or bText:find("ready") then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                    end)
+                end
+            end
+        end
+    end
+
+    if startBossRaidRemote then pcall(function() startBossRaidRemote:FireServer() end) end
+    if startDungeonRemote then pcall(function() startDungeonRemote:FireServer() end) end
+    if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
+    executeInstantReadyUp()
+end
+
 local function triggerCarryStartDungeon()
+    local engine = getCurrentDungeonEngine()
+    if engine == "bossraid" then
+        triggerCarryStartBossRaid()
+        return
+    end
+
     if matchStartUnlockTime == 0 then
         matchStartUnlockTime = os.clock() + 3.8
         print("[Maki Staging ⏳] Staging start triggered! Holding position for 3.8s countdown & barrier drop...")
@@ -1933,64 +2159,211 @@ local function triggerCarryStartDungeon()
     if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
     if startDungeonRemote then pcall(function() startDungeonRemote:FireServer() end) end
     if changeStartValueRemote then pcall(function() changeStartValueRemote:FireServer() end) end
+    executeInstantReadyUp()
 end
 
 -- Staging Room Auto-Start & Alt Synchronization Watcher Loop
+local isStagingStarted = false
 task.spawn(function()
     while _G.MAKI_MASTER_SUITE_RUNNING do
         task.wait(0.3)
         if isDungeon() then
+            local engine = getCurrentDungeonEngine()
             local prog = getDungeonProgress()
-            local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "" or not prog)
+            local isPreStart = (prog == "active" or prog == "notstarted" or prog == "staging" or prog == "playersnotready" or prog:find("ready") or prog == "" or not prog)
             local pG = LocalPlayer:FindFirstChild("PlayerGui")
-            local qG = pG and pG:FindFirstChild("queueGui")
+            local qG = pG and (pG:FindFirstChild("queueGui") or pG:FindFirstChild("bossQueueGui"))
             local sBtn = (pG and pG:FindFirstChild("startButton", true)) or (qG and qG:FindFirstChild("startButton", true))
 
-            if isPreStart and ((qG and qG.Enabled) or (sBtn and sBtn.Visible)) then
-                if isCarry then
-                    -- Auto-approve any pending join requests in staging
-                    if Config.AutoAcceptJoins and pG then
-                        for _, c in ipairs(pG:GetChildren()) do
-                            if c.Name == "joinRequestConfirm" then
-                                instantAcceptAndDestroyPopup(c)
+            if isCarry then
+                -- Auto-approve any pending join requests in staging
+                if Config.AutoAcceptJoins and pG then
+                    for _, c in ipairs(pG:GetChildren()) do
+                        if c.Name == "joinRequestConfirm" then
+                            instantAcceptAndDestroyPopup(c)
+                        end
+                    end
+                    if respondJoinRequestRemote and Config.AltUsernames then
+                        for _, altName in ipairs(Config.AltUsernames) do
+                            if not Players:FindFirstChild(altName) then
+                                pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
                             end
                         end
-                        if respondJoinRequestRemote and Config.AltUsernames then
-                            for _, altName in ipairs(Config.AltUsernames) do
-                                if not Players:FindFirstChild(altName) then
-                                    pcall(function() respondJoinRequestRemote:FireServer(altName, true) end)
+                    end
+                end
+
+                if not isStagingStarted and (engine == "bossraid" or (qG and qG.Enabled) or (sBtn and sBtn.Visible) or prog == "playersnotready" or prog:find("ready")) then
+                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
+                    if allReady then
+                        isStagingStarted = true
+                        print(string.format("[Maki Staging] 👥 100%% of Alts loaded in %s Room! Starting Encounter & Readying Up...", engine == "bossraid" and "Boss Raid" or "Dungeon"))
+                        triggerCarryStartDungeon()
+                    else
+                        print(string.format("[Maki Staging ⏳] Waiting for Alts to load (%d/%d loaded)...", loadedCount, totalAlts))
+                    end
+                end
+            else
+                -- Alt: Lock spawn and ready up instantly (1:1 with maki_boss_raid_v3.1.lua)
+                if not altSpawnPosition then
+                    lockAltSpawn()
+                end
+                executeInstantReadyUp()
+            end
+        else
+            isStagingStarted = false
+        end
+    end
+end)
+
+-- ========================================================================
+--  NEXT TIER / REPLAY ENGINE (1:1 MATCH WITH MAKI BOSS RAID V3.1)
+-- ========================================================================
+local function getCurrentRaidTier()
+    local dObj = Workspace:FindFirstChild("dungeon")
+    local tVal = dObj and (dObj:FindFirstChild("tier") or dObj:FindFirstChild("raidTier"))
+    if tVal and tVal:IsA("IntValue") and tVal.Value > 0 then
+        return tVal.Value
+    end
+
+    local dName = Workspace:FindFirstChild("dungeonName")
+    if dName and dName:IsA("StringValue") then
+        local tMatch = dName.Value:match("[Tt]ier%s*(%d+)")
+        if tMatch and tonumber(tMatch) then
+            return tonumber(tMatch)
+        end
+    end
+
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        for _, desc in ipairs(pG:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Visible and desc.Text then
+                local tMatch = desc.Text:match("[Tt]ier%s*(%d+)")
+                if tMatch and tonumber(tMatch) then
+                    return tonumber(tMatch)
+                end
+            end
+        end
+    end
+
+    return Config.CurrentTier or 1
+end
+
+local function isRaidFinished()
+    local prog = getDungeonProgress()
+    if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog:find("kill") or prog:find("won") or prog:find("win") then
+        return true
+    end
+
+    local dungeon = Workspace:FindFirstChild("dungeon")
+    local bossRoom = dungeon and (dungeon:FindFirstChild("bossRoom") or dungeon:FindFirstChild("room"))
+    local finished = bossRoom and (bossRoom:FindFirstChild("dungeonFinished") or bossRoom:FindFirstChild("finished"))
+    if finished and finished:IsA("BoolValue") and finished.Value == true then
+        return true
+    end
+
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    if pG then
+        for _, name in ipairs({"dungeonResultGui", "resultsGui", "raidCompleteGui", "completeGui", "dungeonEndGui", "gameEndGui", "ReplayDungeonButton"}) do
+            local g = pG:FindFirstChild(name)
+            if g and ((g:IsA("ScreenGui") and g.Enabled) or (g:IsA("GuiObject") and g.Visible)) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+local isProcessingReplay = false
+local function handleNextTierAndReplay()
+    if isProcessingReplay then return end
+    isProcessingReplay = true
+
+    task.spawn(function()
+        local curTier = getCurrentRaidTier()
+        print(string.format("[Maki Replay] ⚡ Boss Defeated in Tier %d! Checking Next Tier vs Replay...", curTier))
+
+        executeUniversalAutoSell()
+
+        task.wait(1.5)
+
+        local startTime = os.clock()
+        while _G.MAKI_MASTER_SUITE_RUNNING and isDungeon() and (os.clock() - startTime < 12.0) do
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            local nextTierClicked = false
+
+            -- 1. If tier < 30 and AutoNextTier is enabled: Click Next Tier button ONLY (do not fire Replay)
+            if Config.AutoNextTier and curTier < 30 and pG then
+                for _, gui in ipairs(pG:GetChildren()) do
+                    if gui:IsA("ScreenGui") and gui.Enabled then
+                        for _, btn in ipairs(gui:GetDescendants()) do
+                            if btn:IsA("GuiButton") and btn.Visible then
+                                local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                                local bName = btn.Name:lower()
+                                if (bText:find("next") or bName:find("nexttier") or bName:find("next_tier") or bName:find("upgradetier")) and not bText:find("prev") then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                                    end)
+                                    if upgradeKeyRemote then
+                                        pcall(function() upgradeKeyRemote:FireServer() end)
+                                    end
+                                    nextTierClicked = true
+                                    print(string.format("[Maki Boss Raid 🌟] Advancing to Next Tier from Tier %d!", curTier))
+                                    break
                                 end
                             end
                         end
                     end
+                    if nextTierClicked then break end
+                end
+            end
 
-                    -- Check if all alts are inside and loaded
-                    local allReady, loadedCount, totalAlts = areAllAltsInDungeon()
-                    if allReady then
-                        triggerCarryStartDungeon()
-                    end
-                else
-                    -- Alt: Ready up and click ready buttons
-                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
-                    if pG then
-                        for _, btn in ipairs(pG:GetDescendants()) do
-                            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
-                                local bName = btn.Name:lower()
-                                local bText = btn:IsA("TextButton") and btn.Text:lower() or ""
-                                if bName:find("ready") or bText:find("ready") then
-                                    pcall(function()
-                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-                                    end)
+            -- 2. If at Max Tier (>= 30) OR if Next Tier button is not present, loop REPLAY over and over!
+            if not nextTierClicked then
+                if replayRemote then
+                    pcall(function() replayRemote:FireServer() end)
+                    pcall(function() replayRemote:FireServer({ isHardcore = true, hardcore = true }) end)
+                end
+                if readyUpRemote then
+                    pcall(function() readyUpRemote:FireServer() end)
+                end
+
+                if pG then
+                    for _, gui in ipairs(pG:GetChildren()) do
+                        if gui:IsA("ScreenGui") and gui.Enabled then
+                            for _, btn in ipairs(gui:GetDescendants()) do
+                                if btn:IsA("GuiButton") and btn.Visible then
+                                    local bText = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                                    local bName = btn.Name:lower()
+                                    if bText:find("replay") or bText:find("retry") or bName:find("replay") or bName:find("retry") or bName:find("playagain") then
+                                        pcall(function()
+                                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do c:Fire() end
+                                        end)
+                                        print(string.format("[Maki Boss Raid 🔄] Replaying Max Tier %d!", curTier))
+                                    end
                                 end
                             end
                         end
                     end
                 end
             end
+
+            task.wait(0.4)
         end
-    end
-end)
+
+        -- Failsafe: if still in finished raid after 12s, return to Main Lobby so carry re-hosts immediately
+        if isDungeon() and _G.MAKI_MASTER_SUITE_RUNNING and isRaidFinished() then
+            print("[Maki Replay] 🔄 Replay timed out after 12s, returning to Main Lobby to re-host...")
+            returnPartyToLobby()
+        end
+
+        isProcessingReplay = false
+    end)
+end
 
 -- Master Match State, Victory/Defeat Auto-Retry & Lobby Watcher
 task.spawn(function()
@@ -2013,7 +2386,8 @@ task.spawn(function()
             -- ================================================================
             --  VICTORY CONDITION
             -- ================================================================
-            if prog == "bosskilled" or prog == "victory" or prog == "complete" then
+            local isFinished = (prog == "bosskilled" or prog == "victory" or prog == "complete" or isRaidFinished())
+            if isFinished then
                 executeUniversalAutoSell()
 
                 if isCarry then
@@ -2029,17 +2403,22 @@ task.spawn(function()
                             altName, altLvl, curDungeon, curDiff, currentLadder.dungeon, currentLadder.diff))
                         returnPartyToLobby()
                     else
-                        print(string.format("[Maki Progression] ⚡ Replaying %s (%s) in 2.5s...", curDungeon, curDiff))
-                        task.wait(2.5)
-                        if replayRemote then pcall(function() replayRemote:FireServer() end) end
-                        if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
-                        matchStartUnlockTime = 0
-                        currentWpIndex = 1
-                        mhcCurrentIndex = 1
+                        local engine = getCurrentDungeonEngine()
+                        if engine == "bossraid" then
+                            handleNextTierAndReplay()
+                        else
+                            print(string.format("[Maki Progression] ⚡ Replaying %s (%s) in 2.5s...", curDungeon, curDiff))
+                            task.wait(2.5)
+                            if replayRemote then pcall(function() replayRemote:FireServer() end) end
+                            if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                            matchStartUnlockTime = 0
+                            currentWpIndex = 1
+                            mhcCurrentIndex = 1
+                        end
                     end
                 else
                     task.wait(2.8)
-                    if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+                    executeInstantReadyUp()
                 end
             end
 
@@ -2084,6 +2463,8 @@ task.spawn(function()
             matchStartUnlockTime = 0
             currentWpIndex = 1
             mhcCurrentIndex = 1
+            isStagingStarted = false
+            isProcessingReplay = false
 
             -- Execute Dynamic Sequential Gold Gamepass Buyer in Lobby
             executeSequentialGamepassBuyer()
