@@ -2395,15 +2395,22 @@ task.spawn(function()
                     local currentLadder, altLvl, altName = getOptimalDungeonForAlts()
                     local curDungeon = Config.CurrentDungeon or "Pirate Island"
                     local curDiff = Config.CurrentDiff or "Insane"
+                    local engine = getCurrentDungeonEngine()
 
-                    local isUpgraded = (currentLadder.dungeon ~= curDungeon) or (currentLadder.diff ~= curDiff)
+                    local isUpgraded = false
+                    if engine == "bossraid" or curDungeon == "Boss Raids" or curDungeon:lower():find("raid") then
+                        -- In Boss Raids (Levels 130-144), stay in the raid room clicking Next Tier / Replay!
+                        -- ONLY upgrade & return to lobby when alts reach Level 145+ (promoting to Orbital Outpost)
+                        isUpgraded = (currentLadder.dungeon ~= "Boss Raids" and not currentLadder.dungeon:lower():find("raid"))
+                    else
+                        isUpgraded = (currentLadder.dungeon ~= curDungeon) or (currentLadder.diff ~= curDiff)
+                    end
 
                     if isUpgraded and Config.AutoProgression then
                         print(string.format("[Maki Progression] 🎉 %s reached Level %d! Promoting from %s (%s) ➔ %s (%s)...",
                             altName, altLvl, curDungeon, curDiff, currentLadder.dungeon, currentLadder.diff))
                         returnPartyToLobby()
                     else
-                        local engine = getCurrentDungeonEngine()
                         if engine == "bossraid" then
                             handleNextTierAndReplay()
                         else
