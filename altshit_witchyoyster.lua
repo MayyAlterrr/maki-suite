@@ -1,5 +1,5 @@
 -- ========================================================================
---  PROJECT MAKI: ALTSHIT ILOVESANJIMANN
+--  PROJECT MAKI: ALTSHIT WITCHYOYSTER
 --  VERSION: 2.0 (WHITE SCREEN & ULTIMATE FPS BOOST EDITION)
 -- ========================================================================
 --  FEATURES:
@@ -12,12 +12,12 @@
 --          atmosphere, particles, decals, and simplifies terrain/materials.
 --        - Instant 1-click & Hotkey (F8) toggling between White Screen & 3D view.
 --    • Main Lobby:
---        - Automatically and continuously spams join requests to "IloveSanjiMann".
+--        - Automatically and continuously spams join requests to "WitchyOyster".
 --        - Automatically readies up when in party / queueGui.
 --    • Inside Dungeon:
 --        - Anti-Bot Wandering: Randomly moves around the dungeon with raycast
 --          ground verification (never falls off edges or into the void).
---        - Formation Awareness: Loosely stays within range of IloveSanjiMann
+--        - Formation Awareness: Loosely stays within range of WitchyOyster
 --          when nearby so alts look like real team members.
 --        - Realistic Anti-Bot Jitter: Random jumps, smooth look directions,
 --          and natural idle pauses.
@@ -25,8 +25,8 @@
 --          and swings weapon to simulate active gameplay.
 --        - Anti-AFK Engine: VirtualUser controller capture prevents 20-min kick.
 --    • Host Exit Watchdog:
---        - Instant PlayerRemoving detection when IloveSanjiMann leaves the game.
---        - Polling monitor that detects when IloveSanjiMann teleports back to lobby.
+--        - Instant PlayerRemoving detection when WitchyOyster leaves the game.
+--        - Polling monitor that detects when WitchyOyster teleports back to lobby.
 --        - Automatically executes return to lobby for all alts!
 --        - Automatically resumes join spam once landed in the lobby!
 --    • Modern Dual HUD:
@@ -49,11 +49,11 @@ local VirtualInputManager = nil
 pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
 
 -- Anti-Duplicate Instance Management
-if _G.ALTSHIT_ILOVESANJIMANN_RUNNING then
-    _G.ALTSHIT_ILOVESANJIMANN_RUNNING = false
+if _G.ALTSHIT_WITCHYOYSTER_RUNNING then
+    _G.ALTSHIT_WITCHYOYSTER_RUNNING = false
     task.wait(0.25)
 end
-_G.ALTSHIT_ILOVESANJIMANN_RUNNING = true
+_G.ALTSHIT_WITCHYOYSTER_RUNNING = true
 
 local function getGuiParent()
     if typeof(gethui) == "function" then
@@ -68,7 +68,7 @@ end
 -- ========================================================================
 --  [1] CONFIGURATION & STATE
 -- ========================================================================
-local TARGET_HOST         = _G.TARGET_HOST or _G.TARGET_CARRY or "IloveSanjiMann"
+local TARGET_HOST         = _G.TARGET_HOST or _G.TARGET_CARRY or "WitchyOyster"
 local AutomationEnabled   = true
 local WhiteScreenEnabled  = true
 local LowFpsCap           = 15
@@ -364,7 +364,7 @@ applyUltimateFpsBoost()
 
 -- Thread A: Lobby Join Spammer & Dungeon Host Watcher
 task.spawn(function()
-    while _G.ALTSHIT_ILOVESANJIMANN_RUNNING do
+    while _G.ALTSHIT_WITCHYOYSTER_RUNNING do
         if not AutomationEnabled then
             task.wait(1.0)
         elseif isMainLobby() then
@@ -422,7 +422,7 @@ end)
 task.spawn(function()
     local lastCombatAction = 0
 
-    while _G.ALTSHIT_ILOVESANJIMANN_RUNNING do
+    while _G.ALTSHIT_WITCHYOYSTER_RUNNING do
         if isDungeon() and not isReturningToLobby and AutomationEnabled then
             local char = LocalPlayer.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -491,11 +491,11 @@ end)
 --  [9] GRAPHICAL USER INTERFACE & WHITE SCREEN DASHBOARD
 -- ========================================================================
 local parent = getGuiParent()
-local existingGui = parent:FindFirstChild("AltShitIloveSanjiMannGui")
+local existingGui = parent:FindFirstChild("AltShitWitchyOysterGui")
 if existingGui then existingGui:Destroy() end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AltShitIloveSanjiMannGui"
+ScreenGui.Name = "AltShitWitchyOysterGui"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parent
@@ -559,7 +559,7 @@ local WSTitle = Instance.new("TextLabel")
 WSTitle.Size = UDim2.new(1, -24, 0, 24)
 WSTitle.Position = UDim2.new(0, 12, 0, 12)
 WSTitle.BackgroundTransparency = 1
-WSTitle.Text = "⚡ ALTSHIT: ILOVESANJIMANN"
+WSTitle.Text = "⚡ ALTSHIT: WITCHYOYSTER"
 WSTitle.TextColor3 = Color3.fromRGB(45, 35, 70)
 WSTitle.TextSize = 14
 WSTitle.Font = Enum.Font.GothamBold
@@ -595,7 +595,7 @@ local WS_HostLbl = Instance.new("TextLabel")
 WS_HostLbl.Size = UDim2.new(1, -24, 0, 18)
 WS_HostLbl.Position = UDim2.new(0, 12, 0, 82)
 WS_HostLbl.BackgroundTransparency = 1
-WS_HostLbl.Text = "Host: IloveSanjiMann (Searching...)"
+WS_HostLbl.Text = "Host: WitchyOyster (Searching...)"
 WS_HostLbl.TextColor3 = Color3.fromRGB(100, 110, 135)
 WS_HostLbl.TextSize = 10
 WS_HostLbl.Font = Enum.Font.GothamMedium
@@ -720,7 +720,7 @@ TitleLabel.Name = "TitleLabel"
 TitleLabel.Size = UDim2.new(1, -70, 1, 0)
 TitleLabel.Position = UDim2.new(0, 10, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "⚡ ALTSHIT: ILOVESANJIMANN"
+TitleLabel.Text = "⚡ ALTSHIT: WITCHYOYSTER"
 TitleLabel.TextColor3 = Color3.fromRGB(230, 215, 255)
 TitleLabel.TextSize = 12
 TitleLabel.Font = Enum.Font.GothamBold
@@ -1082,7 +1082,7 @@ end)
 --  D. GUI LIVE MONITOR LOOP
 -- ------------------------------------------------------------------------
 task.spawn(function()
-    while _G.ALTSHIT_ILOVESANJIMANN_RUNNING and ScreenGui and ScreenGui.Parent do
+    while _G.ALTSHIT_WITCHYOYSTER_RUNNING and ScreenGui and ScreenGui.Parent do
         local hostPlr = getHostPlayer()
         local hostText = hostPlr and string.format("Host: %s (Online ✅)", hostPlr.Name) or string.format("Host: %s (Not in Server ❌)", TARGET_HOST)
         local hostColor = hostPlr and Color3.fromRGB(140, 255, 170) or Color3.fromRGB(255, 140, 140)
@@ -1128,5 +1128,5 @@ task.spawn(function()
     end
 end)
 
-print(string.format("[ALTSHIT ILOVESANJIMANN v2.0] Running on %s. White Screen & Ultimate FPS Boost active!", 
+print(string.format("[ALTSHIT WITCHYOYSTER v2.0] Running on %s. White Screen & Ultimate FPS Boost active!", 
     LocalPlayer.Name))
