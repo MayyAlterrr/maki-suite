@@ -2037,9 +2037,6 @@ local function isTargetKeptEpic(nameLower)
     if nameLower:find("eldenbark") then
         return true
     end
-    if nameLower:find("overgrown war scythe") or nameLower:find("crystalline shard staff") then
-        return true
-    end
     return false
 end
 
