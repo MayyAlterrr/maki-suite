@@ -46,7 +46,7 @@
 
 
 
---          - Pre-Buff Charge (200s): Pop Q on the run
+--          - Pre-Buff Charge (180s): Pop Q on the run
 
 
 
@@ -5932,8 +5932,8 @@ task.spawn(function()
 
 
 
-                                        -- Pre-buff Q on the run at 200 studs so we sprint towards boss with +80% speed!
-                    if bossDist <= 200 and isQReady() then
+                                        -- Pre-buff Q on the run at 180 studs so we sprint towards boss with +80% speed!
+                    if bossDist <= 180 and isQReady() then
 
 
 
