@@ -1325,19 +1325,32 @@ local function collectDungeonData()
 end
 
 local efDeathRetryActive = false
+local efWasAlive = false
+local efLastRetryTime = 0
 
-local function triggerEFDeathRetry()
+local function triggerEFDeathRetry(reason)
+    if not isCarry then return end -- ONLY FOR CARRY! ALTS CANNOT TRIGGER RETRY
+    if not isDungeon() then return end
+    local slug, _ = getDungeonSlug()
+    local optLadder = typeof(getOptimalDungeonForAlts) == "function" and getOptimalDungeonForAlts() or nil
+    local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
+    if not is175Plus then return end -- ONLY LEVEL 175+
+
     if efDeathRetryActive then return end
+    if (tick() - efLastRetryTime) < 8.0 then return end
+
     efDeathRetryActive = true
+    efWasAlive = false -- Disarm immediately to prevent any looping
+    efLastRetryTime = tick()
 
     task.spawn(function()
-        print("[Maki EF 💀] Carry died in Enchanted Forest (175+)! Initiating instant dungeon retry...")
+        print(string.format("[Maki EF 💀] Carry died in Enchanted Forest (175+)! In-place dungeon replay initiated (%s)...", tostring(reason or "unspecified")))
 
-        pcall(function()
-            if typeof(writefile) == "function" then
-                writefile("maki_retry_flag.txt", "retry")
-            end
-        end)
+        -- Ensure Host Auto-Replay is ON
+        local hostSetAutoReplay = remotes and remotes:FindFirstChild("hostSetAutoReplay")
+        if hostSetAutoReplay then
+            pcall(function() hostSetAutoReplay:FireServer(true) end)
+        end
 
         pcall(function()
             local char = LocalPlayer.Character
@@ -1367,6 +1380,7 @@ local function triggerEFDeathRetry()
         efBossHitsLanded = 0
         efIsCastingCombo = false
 
+        -- 1. Fire Remote with complete Dungeon Data
         local data = collectDungeonData()
         if replayRemote then
             pcall(function() replayRemote:FireServer(data) end)
@@ -1377,36 +1391,56 @@ local function triggerEFDeathRetry()
             pcall(function() readyUpRemote:FireServer() end)
         end
 
+        -- 2. Click In-Place Replay GUI Buttons
         local pG = LocalPlayer:FindFirstChild("PlayerGui")
         if pG then
-            for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay", "PlayAgainButton", "playAgain"}) do
-                local btn = pG:FindFirstChild(btnName, true)
-                if btn and btn:IsA("GuiButton") then
+            -- Host panel replay button
+            local hostReplay = pG:FindFirstChild("hostPanel", true)
+            if hostReplay then
+                local rBtn = hostReplay:FindFirstChild("replay", true)
+                local tBtn = rBtn and rBtn:FindFirstChild("TextButton")
+                if tBtn and tBtn:IsA("GuiButton") then
                     pcall(function()
-                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(tBtn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(tBtn.MouseButton1Click)) do c:Fire() end
+                    end)
+                end
+            end
+
+            -- Confirmation dialog confirm button
+            local replayConfirm = pG:FindFirstChild("ReplayConfirmation", true)
+            if replayConfirm then
+                local conf = replayConfirm:FindFirstChild("confirm", true)
+                local cBtn = conf and conf:FindFirstChild("TextButton")
+                if cBtn and cBtn:IsA("GuiButton") then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(cBtn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(cBtn.MouseButton1Click)) do c:Fire() end
+                    end)
+                end
+            end
+
+            -- Defeat / Victory Menu replay button
+            local menuGui = pG:FindFirstChild("Menu", true)
+            if menuGui then
+                local rBtn = menuGui:FindFirstChild("replayButton", true)
+                local tBtn = rBtn and (rBtn:IsA("GuiButton") and rBtn or rBtn:FindFirstChild("TextButton"))
+                if tBtn and tBtn:IsA("GuiButton") then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(tBtn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(tBtn.MouseButton1Click)) do c:Fire() end
                     end)
                 end
             end
         end
 
-        task.wait(0.8)
-        if isDungeon() then
-            print("[Maki EF 🔄] In-place replay pending - returning party to lobby to restart immediately...")
-            if typeof(returnPartyToLobby) == "function" then
-                pcall(returnPartyToLobby)
-            else
-                if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
-                pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
-            end
-        end
-
-        task.wait(3.0)
+        task.wait(8.0)
         efDeathRetryActive = false
     end)
 end
 
 local function bindCarryDeathWatcher(char)
+    if not isCarry then return end -- ONLY FOR CARRY! ALTS IGNORED
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 8)
     if not hum then return end
@@ -1414,9 +1448,21 @@ local function bindCarryDeathWatcher(char)
     hum.Died:Connect(function()
         if isCarry and isDungeon() then
             local slug, _ = getDungeonSlug()
-            if slug == "enchanted_forest" then
-                print("[Maki EF 💀] Carry died in Enchanted Forest (175+)! Triggering instant dungeon retry...")
-                triggerEFDeathRetry()
+            local optLadder = typeof(getOptimalDungeonForAlts) == "function" and getOptimalDungeonForAlts() or nil
+            local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
+            if is175Plus then
+                triggerEFDeathRetry("Humanoid.Died event")
+            end
+        end
+    end)
+
+    hum.HealthChanged:Connect(function(hp)
+        if isCarry and isDungeon() and hp <= 0 then
+            local slug, _ = getDungeonSlug()
+            local optLadder = typeof(getOptimalDungeonForAlts) == "function" and getOptimalDungeonForAlts() or nil
+            local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
+            if is175Plus then
+                triggerEFDeathRetry(string.format("Health <= 0 (%.1f)", hp))
             end
         end
     end)
@@ -3724,30 +3770,9 @@ task.spawn(function()
                 if not altSpawnPosition then
                     lockAltSpawn()
                 end
-
-                local retryFlagActive = false
-                pcall(function()
-                    if typeof(isfile) == "function" and isfile("maki_retry_flag.txt") then
-                        local txt = readfile("maki_retry_flag.txt")
-                        if txt and txt:find("retry") then retryFlagActive = true end
-                    end
-                end)
-
                 local carryPlayer = getCarryPlayer()
                 if not carryPlayer and not altLobbyExitTriggered then
                     exitAltToMainLobby()
-                elseif (retryFlagActive or carryPlayer) and not altLobbyExitTriggered then
-                    local slug, _ = getDungeonSlug()
-                    if slug == "enchanted_forest" then
-                        local cChar = carryPlayer and carryPlayer.Character
-                        local cHum = cChar and cChar:FindFirstChildOfClass("Humanoid")
-                        local cHrp = cChar and (cChar:FindFirstChild("HumanoidRootPart") or cChar:FindFirstChild("Torso"))
-                        local carryDead = retryFlagActive or (cHum and cHum.Health <= 0) or (cHrp and cHrp.Position.Y < -55)
-                        if carryDead then
-                            print("[Maki Alt 🛡️] Detected Carry death in Enchanted Forest (175+)! Following Carry to lobby for instant retry...")
-                            exitAltToMainLobby()
-                        end
-                    end
                 end
             end
 
@@ -3853,11 +3878,7 @@ task.spawn(function()
             altLobbyExitTriggered = false
             altSpawnPosition = nil
             efDeathRetryActive = false
-            pcall(function()
-                if typeof(delfile) == "function" and typeof(isfile) == "function" and isfile("maki_retry_flag.txt") then
-                    delfile("maki_retry_flag.txt")
-                end
-            end)
+            
             isPlaybackActive = false
             matchStartUnlockTime = 0
             currentWpIndex = 1
