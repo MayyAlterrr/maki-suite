@@ -199,6 +199,28 @@ end
 loadConfig()
 
 local isCarry = true
+local function getCarryPlayer()
+    if Config.CarryUsername and #Config.CarryUsername > 0 then
+        local p = Players:FindFirstChild(Config.CarryUsername)
+        if p then return p end
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        local isAlt = false
+        if Config.AltUsernames then
+            for _, alt in ipairs(Config.AltUsernames) do
+                if p.Name:lower() == tostring(alt):lower() then
+                    isAlt = true
+                    break
+                end
+            end
+        end
+        if not isAlt then
+            return p
+        end
+    end
+    return nil
+end
+
 local function updateCarryRole()
     if Config.CarryUsername and #Config.CarryUsername > 0 then
         isCarry = (LocalPlayer.Name:lower() == Config.CarryUsername:lower())
@@ -1083,44 +1105,28 @@ local function triggerEFDeathRetry()
     efDeathRetryActive = true
 
     task.spawn(function()
-        print("[Maki EF 💀] Carry died on Level 175+! Retrying dungeon immediately to save time...")
+        print("[Maki EF 💀] Carry died in Enchanted Forest (175+)! Initiating instant dungeon retry...")
+
+        pcall(function()
+            if typeof(writefile) == "function" then
+                writefile("maki_retry_flag.txt", "retry")
+            end
+        end)
+
+        pcall(function()
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hum and hrp then
+                hum:MoveTo(hrp.Position)
+            end
+        end)
 
         pcall(function()
             if typeof(executeUniversalAutoSell) == "function" then
                 executeUniversalAutoSell()
             end
         end)
-
-        task.wait(0.3)
-        local data = collectDungeonData()
-
-        for attempt = 1, 4 do
-            if not isDungeon() then break end
-
-            if replayRemote then
-                pcall(function() replayRemote:FireServer(data) end)
-                pcall(function() replayRemote:FireServer("bossKilled") end)
-                pcall(function() replayRemote:FireServer() end)
-            end
-            if readyUpRemote then
-                pcall(function() readyUpRemote:FireServer() end)
-            end
-
-            local pG = LocalPlayer:FindFirstChild("PlayerGui")
-            if pG then
-                for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay", "PlayAgainButton", "playAgain"}) do
-                    local btn = pG:FindFirstChild(btnName, true)
-                    if btn and btn:IsA("GuiButton") then
-                        pcall(function()
-                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
-                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
-                        end)
-                    end
-                end
-            end
-
-            task.wait(1.0)
-        end
 
         matchStartUnlockTime = 0
         currentWpIndex = 1
@@ -1135,11 +1141,37 @@ local function triggerEFDeathRetry()
         efBossHitsLanded = 0
         efIsCastingCombo = false
 
-        task.wait(2.0)
-        if isDungeon() and efDeathRetryActive then
-            print("[Maki EF 🔄] Replay remote pending - calling returnPartyToLobby fallback...")
+        local data = collectDungeonData()
+        if replayRemote then
+            pcall(function() replayRemote:FireServer(data) end)
+            pcall(function() replayRemote:FireServer("bossKilled") end)
+            pcall(function() replayRemote:FireServer() end)
+        end
+        if readyUpRemote then
+            pcall(function() readyUpRemote:FireServer() end)
+        end
+
+        local pG = LocalPlayer:FindFirstChild("PlayerGui")
+        if pG then
+            for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay", "PlayAgainButton", "playAgain"}) do
+                local btn = pG:FindFirstChild(btnName, true)
+                if btn and btn:IsA("GuiButton") then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                    end)
+                end
+            end
+        end
+
+        task.wait(0.8)
+        if isDungeon() then
+            print("[Maki EF 🔄] In-place replay pending - returning party to lobby to restart immediately...")
             if typeof(returnPartyToLobby) == "function" then
                 pcall(returnPartyToLobby)
+            else
+                if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
+                pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
             end
         end
 
@@ -1156,9 +1188,7 @@ local function bindCarryDeathWatcher(char)
     hum.Died:Connect(function()
         if isCarry and isDungeon() then
             local slug, _ = getDungeonSlug()
-            local optLadder = getOptimalDungeonForAlts()
-            local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
-            if is175Plus then
+            if slug == "enchanted_forest" then
                 print("[Maki EF 💀] Carry died in Enchanted Forest (175+)! Triggering instant dungeon retry...")
                 triggerEFDeathRetry()
             end
@@ -2030,7 +2060,8 @@ end
 
 local function execute1to1EnchantedForest(char, hrp, hum, myPos, waypoints)
     if efDeathRetryActive then return end
-    if hum.Health <= 0 then
+    local isDead = (hum and hum.Health <= 0) or (hrp and hrp.Position.Y < -55) or (hum and hum:GetState() == Enum.HumanoidStateType.Dead)
+    if isDead then
         triggerEFDeathRetry()
         return
     end
@@ -2279,6 +2310,11 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     bindCarryDeathWatcher(newChar)
     local slug, _ = getDungeonSlug()
     if slug == "enchanted_forest" then
+        if isCarry and isDungeon() and (matchStartUnlockTime > 0 or efCurrentWpIndex > 10) and not efDeathRetryActive then
+            print("[Maki EF 💀] CharacterAdded respawn detected in active Enchanted Forest match! Triggering instant retry...")
+            triggerEFDeathRetry()
+            return
+        end
         efRoom5ShortcutDone = false
         efShortcutActive = false
         efShortcutIdx = 1
@@ -2313,6 +2349,17 @@ task.spawn(function()
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
+            -- ANY CAUSE OF DEATH CHECK (Health <= 0, chasm fall Y < -55, or dead state)
+            local isDead = (hum and hum.Health <= 0) or (hrp and hrp.Position.Y < -55) or (hum and hum:GetState() == Enum.HumanoidStateType.Dead)
+            if isDead then
+                local slug, _ = getDungeonSlug()
+                if slug == "enchanted_forest" then
+                    triggerEFDeathRetry()
+                    task.wait(0.2)
+                    continue
+                end
+            end
+
             if hrp and hum and hum.Health > 0 then
                 if not isMatchUnlocked() then
                     hum:MoveTo(hrp.Position)
@@ -2342,24 +2389,18 @@ task.spawn(function()
 
                     if #waypoints > 0 then
                         if slug == "enchanted_forest" then
-                            -- Level 175+ Mid-Run Death Spawn Guard: If back at spawn after reaching WP 50+, retry instantly!
-                            if efCurrentWpIndex > 50 and myPos.X > 50 and not efDeathRetryActive then
+                            -- Level 175+ Mid-Run Death Spawn Guard: If back at spawn after leaving spawn, retry instantly!
+                            if efCurrentWpIndex > 10 and myPos.X > 50 and not efDeathRetryActive then
                                 print(string.format("[Maki EF 💀] Carry respawned back at spawn from WP %d! Triggering instant retry...", efCurrentWpIndex))
                                 triggerEFDeathRetry()
                                 continue
                             end
 
-                            -- Checkpoint / Respawn detection
-                            if lastMhcPosBeforeTick and (myPos - lastMhcPosBeforeTick).Magnitude >= 28.0 then
-                                local closestIdx, cDist = findClosestEFWaypointIndex(myPos, waypoints, 1, #waypoints)
-                                efCurrentWpIndex = closestIdx
-                                mhcCurrentIndex = closestIdx
-                                efRoom5ShortcutDone = false
-                                efShortcutActive = false
-                                efShortcutIdx = 1
-                                efIsCastingCombo = false
-                                pcall(stripEFCollision)
-                                print(string.format("[Maki EF 🌲] Respawn detected! Synced to Highway Point %d / %d (Dist: %.1fs)", closestIdx, #waypoints, cDist))
+                            -- Respawn teleport detection: if position jumps by 28+ studs mid-run, trigger retry
+                            if lastMhcPosBeforeTick and (myPos - lastMhcPosBeforeTick).Magnitude >= 28.0 and not efDeathRetryActive then
+                                print(string.format("[Maki EF 💀] Carry respawn/jump detected (Dist: %.1fs)! Triggering instant retry...", (myPos - lastMhcPosBeforeTick).Magnitude))
+                                triggerEFDeathRetry()
+                                continue
                             end
                             lastMhcPosBeforeTick = myPos
 
@@ -2844,15 +2885,33 @@ end
 local returnToLobbyTriggered = false
 local lobbyVerificationActive = false
 
-local function returnPartyToLobby()
+returnPartyToLobby = function()
     if returnToLobbyTriggered then return end
     returnToLobbyTriggered = true
-    print("[Maki Progression] 🚀 Milestone Reached! Returning party to Main Lobby to create new dungeon...")
+    print("[Maki Progression] 🚀 Returning party to Main Lobby to restart dungeon...")
+
+    pcall(function()
+        if typeof(writefile) == "function" then
+            writefile("maki_retry_flag.txt", "retry")
+        end
+    end)
 
     saveConfig()
 
+    local pG = LocalPlayer:FindFirstChild("PlayerGui")
+    local retBtn = pG and pG:FindFirstChild("ReturnToLobbyButton", true)
+    if retBtn then
+        pcall(function()
+            for _, c in ipairs(getconnections(retBtn.Activated)) do c:Fire() end
+            for _, c in ipairs(getconnections(retBtn.MouseButton1Click)) do c:Fire() end
+        end)
+    end
+
     if teleToLobbyRemote then pcall(function() teleToLobbyRemote:FireServer() end) end
-    task.wait(2.0)
+    local rLobby = remotes and (remotes:FindFirstChild("ReturnToLobbyEvent") or remotes:FindFirstChild("teleToLobby"))
+    if rLobby then pcall(function() rLobby:FireServer() end) end
+
+    task.wait(1.5)
     pcall(function() TeleportService:Teleport(77649408247578, LocalPlayer) end)
 end
 
@@ -2995,9 +3054,30 @@ task.spawn(function()
                 if not altSpawnPosition then
                     lockAltSpawn()
                 end
-                local carryInServer = (Config.CarryUsername and #Config.CarryUsername > 0) and Players:FindFirstChild(Config.CarryUsername) or nil
-                if not carryInServer and not altLobbyExitTriggered then
+
+                local retryFlagActive = false
+                pcall(function()
+                    if typeof(isfile) == "function" and isfile("maki_retry_flag.txt") then
+                        local txt = readfile("maki_retry_flag.txt")
+                        if txt and txt:find("retry") then retryFlagActive = true end
+                    end
+                end)
+
+                local carryPlayer = getCarryPlayer()
+                if not carryPlayer and not altLobbyExitTriggered then
                     exitAltToMainLobby()
+                elseif (retryFlagActive or carryPlayer) and not altLobbyExitTriggered then
+                    local slug, _ = getDungeonSlug()
+                    if slug == "enchanted_forest" then
+                        local cChar = carryPlayer and carryPlayer.Character
+                        local cHum = cChar and cChar:FindFirstChildOfClass("Humanoid")
+                        local cHrp = cChar and (cChar:FindFirstChild("HumanoidRootPart") or cChar:FindFirstChild("Torso"))
+                        local carryDead = retryFlagActive or (cHum and cHum.Health <= 0) or (cHrp and cHrp.Position.Y < -55)
+                        if carryDead then
+                            print("[Maki Alt 🛡️] Detected Carry death in Enchanted Forest (175+)! Following Carry to lobby for instant retry...")
+                            exitAltToMainLobby()
+                        end
+                    end
                 end
             end
 
@@ -3089,6 +3169,12 @@ task.spawn(function()
             returnToLobbyTriggered = false
             altLobbyExitTriggered = false
             altSpawnPosition = nil
+            efDeathRetryActive = false
+            pcall(function()
+                if typeof(delfile) == "function" and typeof(isfile) == "function" and isfile("maki_retry_flag.txt") then
+                    delfile("maki_retry_flag.txt")
+                end
+            end)
             isPlaybackActive = false
             matchStartUnlockTime = 0
             currentWpIndex = 1
