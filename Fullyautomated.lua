@@ -58,6 +58,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    LocalPlayer = Players.LocalPlayer
+    task.wait(0.05)
+end
 
 -- Prevent duplicate instances
 if _G.MAKI_MASTER_SUITE_RUNNING then
@@ -3966,7 +3970,8 @@ end)
 
 --  [MODULE 9] ENHANCED MULTI-TAB GUI (DASHBOARD, ALTS, DISCORD)
 -- ========================================================================
-local pGuiRef = LocalPlayer:WaitForChild("PlayerGui")
+local function initMasterGUI()
+    local pGuiRef = getGuiParent()
 local oldGui = pGuiRef:FindFirstChild("Maki_MasterGui")
 if oldGui then oldGui:Destroy() end
 
@@ -4513,5 +4518,7 @@ task.spawn(function()
         end
     end
 end)
+end
+task.spawn(initMasterGUI)
 
 print("[Project Maki 👑] Master Progression Suite V4.0 (Aquatic Temple Direct Route Fixed) LOADED!")
