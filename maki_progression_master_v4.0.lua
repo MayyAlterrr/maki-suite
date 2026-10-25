@@ -1044,6 +1044,128 @@ local function getTargetGroup(enemies, myPos)
 end
 
 -- ========================================================================
+
+local executeUniversalAutoSell
+local returnPartyToLobby
+
+local function collectDungeonData()
+    local data = {}
+    local dName = Workspace:FindFirstChild("dungeonName")
+    if dName and dName:IsA("StringValue") then data.dungeonName = dName.Value end
+    local dProg = Workspace:FindFirstChild("dungeonProgress")
+    if dProg and dProg:IsA("StringValue") then data.dungeonProgress = dProg.Value end
+    local dStarted = Workspace:FindFirstChild("dungeonStarted")
+    if dStarted and dStarted:IsA("BoolValue") then data.dungeonStarted = dStarted.Value end
+    local hc = Workspace:FindFirstChild("hardcore")
+    if hc and hc:IsA("BoolValue") then
+        data.hardcore = hc.Value
+        data.isHardcore = hc.Value
+    end
+    local dung = Workspace:FindFirstChild("dungeon")
+    if dung then
+        for _, v in ipairs(dung:GetChildren()) do
+            if v:IsA("ValueBase") then data[v.Name] = v.Value end
+        end
+        local br = dung:FindFirstChild("bossRoom")
+        if br then
+            for _, v in ipairs(br:GetChildren()) do
+                if v:IsA("ValueBase") then data[v.Name] = v.Value end
+            end
+        end
+    end
+    return data
+end
+
+local efDeathRetryActive = false
+
+local function triggerEFDeathRetry()
+    if efDeathRetryActive then return end
+    efDeathRetryActive = true
+
+    task.spawn(function()
+        print("[Maki EF 💀] Carry died on Level 175+! Retrying dungeon immediately to save time...")
+
+        pcall(function()
+            if typeof(executeUniversalAutoSell) == "function" then
+                executeUniversalAutoSell()
+            end
+        end)
+
+        task.wait(0.3)
+        local data = collectDungeonData()
+
+        for attempt = 1, 4 do
+            if not isDungeon() then break end
+
+            if replayRemote then
+                pcall(function() replayRemote:FireServer(data) end)
+                pcall(function() replayRemote:FireServer("bossKilled") end)
+                pcall(function() replayRemote:FireServer() end)
+            end
+            if readyUpRemote then
+                pcall(function() readyUpRemote:FireServer() end)
+            end
+
+            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+            if pG then
+                for _, btnName in ipairs({"RetryButton", "ReplayButton", "retry", "replay", "PlayAgainButton", "playAgain"}) do
+                    local btn = pG:FindFirstChild(btnName, true)
+                    if btn and btn:IsA("GuiButton") then
+                        pcall(function()
+                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        end)
+                    end
+                end
+            end
+
+            task.wait(1.0)
+        end
+
+        matchStartUnlockTime = 0
+        currentWpIndex = 1
+        mhcCurrentIndex = 1
+        efCurrentWpIndex = 1
+        efTreeKilledThisRun = false
+        efTreeSpawnDetected = false
+        efTreeHitsLanded = 0
+        efShortcutActive = false
+        efShortcutIdx = 1
+        efRoom5ShortcutDone = false
+        efBossHitsLanded = 0
+        efIsCastingCombo = false
+
+        task.wait(2.0)
+        if isDungeon() and efDeathRetryActive then
+            print("[Maki EF 🔄] Replay remote pending - calling returnPartyToLobby fallback...")
+            if typeof(returnPartyToLobby) == "function" then
+                pcall(returnPartyToLobby)
+            end
+        end
+
+        task.wait(3.0)
+        efDeathRetryActive = false
+    end)
+end
+
+local function bindCarryDeathWatcher(char)
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 8)
+    if not hum then return end
+
+    hum.Died:Connect(function()
+        if isCarry and isDungeon() then
+            local slug, _ = getDungeonSlug()
+            local optLadder = getOptimalDungeonForAlts()
+            local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
+            if is175Plus then
+                print("[Maki EF 💀] Carry died in Enchanted Forest (175+)! Triggering instant dungeon retry...")
+                triggerEFDeathRetry()
+            end
+        end
+    end)
+end
+
 --  [MODULE 8-B] 1:1 ENCHANTED FOREST MASTER AUTO-FARM ENGINE
 --  Ported 1:1 from maki_enchanted_forest_master.luau (Exact Behavior Match)
 --  Features:
@@ -1907,6 +2029,11 @@ local function findClosestEFWaypointIndex(pos, points, startIdx, endIdx)
 end
 
 local function execute1to1EnchantedForest(char, hrp, hum, myPos, waypoints)
+    if efDeathRetryActive then return end
+    if hum.Health <= 0 then
+        triggerEFDeathRetry()
+        return
+    end
     if efIsCastingCombo then return end
     local now = tick()
     local totalWps = #waypoints
@@ -2144,7 +2271,12 @@ local function execute1to1EnchantedForest(char, hrp, hum, myPos, waypoints)
     end
 end
 
+if LocalPlayer.Character then
+    bindCarryDeathWatcher(LocalPlayer.Character)
+end
+
 LocalPlayer.CharacterAdded:Connect(function(newChar)
+    bindCarryDeathWatcher(newChar)
     local slug, _ = getDungeonSlug()
     if slug == "enchanted_forest" then
         efRoom5ShortcutDone = false
@@ -2210,6 +2342,13 @@ task.spawn(function()
 
                     if #waypoints > 0 then
                         if slug == "enchanted_forest" then
+                            -- Level 175+ Mid-Run Death Spawn Guard: If back at spawn after reaching WP 50+, retry instantly!
+                            if efCurrentWpIndex > 50 and myPos.X > 50 and not efDeathRetryActive then
+                                print(string.format("[Maki EF 💀] Carry respawned back at spawn from WP %d! Triggering instant retry...", efCurrentWpIndex))
+                                triggerEFDeathRetry()
+                                continue
+                            end
+
                             -- Checkpoint / Respawn detection
                             if lastMhcPosBeforeTick and (myPos - lastMhcPosBeforeTick).Magnitude >= 28.0 then
                                 local closestIdx, cDist = findClosestEFWaypointIndex(myPos, waypoints, 1, #waypoints)
