@@ -625,6 +625,16 @@ local function getLowestAltLevel()
         end
     end
     if minLvl == math.huge then
+        local slug, _ = getDungeonSlug()
+        if slug == "enchanted_forest" then
+            return 175, "Default (Lv 175)"
+        elseif slug == "aquatic_temple" then
+            return 165, "Default (Lv 165)"
+        elseif slug == "volcanic_chambers" then
+            return 150, "Default (Lv 150)"
+        elseif slug == "orbital_outpost" then
+            return 145, "Default (Lv 145)"
+        end
         return 33, "Default (Lv 33)"
     end
     return minLvl, lowestName
@@ -3109,16 +3119,28 @@ task.spawn(function()
             -- ================================================================
             --  VICTORY CONDITION
             -- ================================================================
-            if prog == "bosskilled" or prog == "victory" or prog == "complete" then
+            if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" then
                 executeUniversalAutoSell()
 
                 if isCarry then
                     task.wait(2.0)
                     local currentLadder, altLvl, altName = getOptimalDungeonForAlts()
-                    local curDungeon = Config.CurrentDungeon or "Pirate Island"
-                    local curDiff = Config.CurrentDiff or "Insane"
+                    local slug, rawName = getDungeonSlug()
+                    local curDungeon = (rawName and #rawName > 0) and rawName or (Config.CurrentDungeon or "Pirate Island")
+                    local curDiff = Config.CurrentDiff or "Nightmare"
 
-                    local isUpgraded = (currentLadder.dungeon ~= curDungeon) or (currentLadder.diff ~= curDiff)
+                    -- Keep Config updated with reality
+                    Config.CurrentDungeon = curDungeon
+                    Config.CurrentDiff = curDiff
+
+                    local isUpgraded = false
+                    if slug == "enchanted_forest" or curDungeon:lower():find("enchanted") or (currentLadder and currentLadder.slug == "enchanted_forest") then
+                        -- Level 175+ (Enchanted Forest) is the absolute FINAL dungeon on the ladder!
+                        -- There is NO higher dungeon. NEVER promote or return to lobby from Enchanted Forest!
+                        isUpgraded = false
+                    else
+                        isUpgraded = (currentLadder.dungeon ~= curDungeon) or (currentLadder.diff ~= curDiff)
+                    end
 
                     if isUpgraded and Config.AutoProgression then
                         print(string.format("[Maki Progression] 🎉 %s reached Level %d! Promoting from %s (%s) ➔ %s (%s)...",
@@ -3127,8 +3149,26 @@ task.spawn(function()
                     else
                         print(string.format("[Maki Progression] ⚡ Replaying %s (%s) in 2.5s...", curDungeon, curDiff))
                         task.wait(2.5)
-                        if replayRemote then pcall(function() replayRemote:FireServer() end) end
+                        local data = collectDungeonData()
+                        if replayRemote then
+                            pcall(function() replayRemote:FireServer(data) end)
+                            pcall(function() replayRemote:FireServer() end)
+                        end
                         if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+
+                        local pG = LocalPlayer:FindFirstChild("PlayerGui")
+                        if pG then
+                            for _, name in ipairs({"ReplayDungeonButton", "replayButton", "retryButton", "replay", "retry"}) do
+                                local btn = pG:FindFirstChild(name, true)
+                                if btn and btn:IsA("GuiButton") and btn.Visible then
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                    end)
+                                end
+                            end
+                        end
+
                         matchStartUnlockTime = 0
                         currentWpIndex = 1
                         mhcCurrentIndex = 1
