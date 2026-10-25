@@ -676,6 +676,16 @@ local function getLowestAltLevel()
         end
     end
     if minLvl == math.huge then
+        local slug, _ = getDungeonSlug()
+        if slug == "enchanted_forest" then
+            return 175, "Default (Lv 175)"
+        elseif slug == "aquatic_temple" then
+            return 165, "Default (Lv 165)"
+        elseif slug == "volcanic_chambers" then
+            return 150, "Default (Lv 150)"
+        elseif slug == "orbital_outpost" then
+            return 145, "Default (Lv 145)"
+        end
         return 33, "Default (Lv 33)"
     end
     return minLvl, lowestName
@@ -3643,7 +3653,17 @@ end
 
 local function isRaidFinished()
     local prog = getDungeonProgress()
-    if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" or prog:find("kill") or prog:find("won") or prog:find("win") then
+    if prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete" then
+        return true
+    end
+
+    -- isRaidFinished heuristics are STRICTLY for Boss Raids! Never run on standard dungeons/MHC
+    local engine = getCurrentDungeonEngine()
+    if engine ~= "bossraid" then
+        return false
+    end
+
+    if prog:find("won") or prog:find("win") then
         return true
     end
 
@@ -3779,19 +3799,34 @@ task.spawn(function()
             -- ================================================================
             --  VICTORY CONDITION
             -- ================================================================
-            local isFinished = (prog == "bosskilled" or prog == "victory" or prog == "complete" or isRaidFinished())
+            local engine = getCurrentDungeonEngine()
+            local isFinished = false
+            if engine == "bossraid" then
+                isFinished = (prog == "bosskilled" or prog == "victory" or prog == "complete" or isRaidFinished())
+            else
+                isFinished = (prog == "bosskilled" or prog == "victory" or prog == "complete" or prog == "dungeoncomplete")
+            end
+
             if isFinished then
                 executeUniversalAutoSell()
 
                 if isCarry then
                     task.wait(2.0)
                     local currentLadder, altLvl, altName = getOptimalDungeonForAlts()
-                    local curDungeon = Config.CurrentDungeon or "Pirate Island"
-                    local curDiff = Config.CurrentDiff or "Insane"
-                    local engine = getCurrentDungeonEngine()
+                    local slug, rawName = getDungeonSlug()
+                    local curDungeon = (rawName and #rawName > 0) and rawName or (Config.CurrentDungeon or "Pirate Island")
+                    local curDiff = Config.CurrentDiff or "Nightmare"
+
+                    -- Keep Config updated with reality
+                    Config.CurrentDungeon = curDungeon
+                    Config.CurrentDiff = curDiff
 
                     local isUpgraded = false
-                    if engine == "bossraid" or curDungeon == "Boss Raids" or curDungeon:lower():find("raid") then
+                    if slug == "enchanted_forest" or curDungeon:lower():find("enchanted") or (currentLadder and currentLadder.slug == "enchanted_forest") then
+                        -- Level 175+ (Enchanted Forest) is the absolute FINAL dungeon on the ladder!
+                        -- There is NO higher dungeon. NEVER promote or return to lobby from Enchanted Forest!
+                        isUpgraded = false
+                    elseif engine == "bossraid" or curDungeon == "Boss Raids" or curDungeon:lower():find("raid") then
                         -- In Boss Raids (Levels 130-144), stay in the raid room clicking Next Tier / Replay!
                         -- ONLY upgrade & return to lobby when alts reach Level 145+ (promoting to Orbital Outpost)
                         isUpgraded = (currentLadder.dungeon ~= "Boss Raids" and not currentLadder.dungeon:lower():find("raid"))
@@ -3809,20 +3844,38 @@ task.spawn(function()
                         else
                             print(string.format("[Maki Progression] ⚡ Replaying %s (%s) in 2.5s...", curDungeon, curDiff))
                             task.wait(2.5)
-                            if replayRemote then pcall(function() replayRemote:FireServer() end) end
+                            local data = collectDungeonData()
+                            if replayRemote then
+                                pcall(function() replayRemote:FireServer(data) end)
+                                pcall(function() replayRemote:FireServer() end)
+                            end
                             if readyUpRemote then pcall(function() readyUpRemote:FireServer() end) end
+
+                            local pG = LocalPlayer:FindFirstChild("PlayerGui")
+                            if pG then
+                                for _, name in ipairs({"ReplayDungeonButton", "replayButton", "retryButton", "replay", "retry"}) do
+                                    local btn = pG:FindFirstChild(name, true)
+                                    if btn and btn:IsA("GuiButton") and btn.Visible then
+                                        pcall(function()
+                                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                                        end)
+                                    end
+                                end
+                            end
+
                             matchStartUnlockTime = 0
                             currentWpIndex = 1
                             mhcCurrentIndex = 1
-                        efCurrentWpIndex = 1
-                        efTreeKilledThisRun = false
-                        efTreeSpawnDetected = false
-                        efTreeHitsLanded = 0
-                        efShortcutActive = false
-                        efShortcutIdx = 1
-                        efRoom5ShortcutDone = false
-                        efBossHitsLanded = 0
-                        efIsCastingCombo = false
+                            efCurrentWpIndex = 1
+                            efTreeKilledThisRun = false
+                            efTreeSpawnDetected = false
+                            efTreeHitsLanded = 0
+                            efShortcutActive = false
+                            efShortcutIdx = 1
+                            efRoom5ShortcutDone = false
+                            efBossHitsLanded = 0
+                            efIsCastingCombo = false
                         end
                     end
                 else
