@@ -194,7 +194,7 @@ local Config = {
     CurrentDiff         = "Insane",
     SelectedDungeon     = "Pirate Island",
     SelectedDiff        = "Insane",
-    HardcoreMode        = true,
+    HardcoreMode        = false,
     AutoAcceptJoins     = true,
     AutoProgression     = true,
     AutoSellTrashes     = true,
@@ -237,6 +237,7 @@ local function loadConfig()
     if Config.AutoReadyUp == nil then Config.AutoReadyUp = true end
     if Config.AutoNextTier == nil then Config.AutoNextTier = true end
     Config.CarryFpsCap = 55
+    if Config.HardcoreMode == nil then Config.HardcoreMode = false end
 end
 
 local function saveConfig()
@@ -581,6 +582,7 @@ local ProgressionLadder = {
     { dungeon = "Volcanic Chambers",diff = "Insane",    req = 150, slug = "volcanic_chambers",engine = "mhc" },
     { dungeon = "Volcanic Chambers",diff = "Nightmare", req = 155, slug = "volcanic_chambers",engine = "mhc" },
     { dungeon = "Aquatic Temple",   diff = "Nightmare", req = 165, slug = "aquatic_temple",    engine = "mhc" },
+    { dungeon = "Enchanted Forest", diff = "Nightmare", req = 166, slug = "enchanted_forest", engine = "mhc" },
 }
 
 local function getLivePlayerLevel(playerName)
@@ -1183,7 +1185,7 @@ local function scanLivingEnemies()
             local pos = root.Position
             local dist = (myPos - pos).Magnitude
             local nameLower = obj.Name:lower()
-            local isBoss = (nameLower:find("boss") ~= nil or nameLower:find("guardian") ~= nil or nameLower:find("inferno") ~= nil or nameLower:find("triton") ~= nil or nameLower:find("kraken") ~= nil or hum.MaxHealth > 3000000)
+            local isBoss = (nameLower:find("boss") ~= nil or nameLower:find("guardian") ~= nil or nameLower:find("inferno") ~= nil or nameLower:find("triton") ~= nil or nameLower:find("kraken") ~= nil or nameLower:find("dragon") ~= nil or nameLower:find("tree") ~= nil or nameLower:find("golem") ~= nil or hum.MaxHealth > 3000000)
 
             table.insert(enemies, {
                 model = obj,
@@ -1294,6 +1296,12 @@ task.spawn(function()
                 local slug, _ = getDungeonSlug()
                 local fileName = string.format("dqr_highway_%s.json", slug)
                 local raw = safeReadFile(fileName)
+                if (not raw or #raw == 0) and slug == "enchanted_forest" then
+                    pcall(function()
+                        raw = game:HttpGet("https://raw.githubusercontent.com/MayyAlterrr/maki-suite/main/dqr_highway_enchanted_forest.json")
+                        if raw and #raw > 0 then safeWriteFile(fileName, raw) end
+                    end)
+                end
 
                 if raw and #raw > 0 then
                     local ok, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
@@ -1319,9 +1327,47 @@ task.spawn(function()
                         local qReady = (qCd <= 0.1) and ((now - mhcLastQTime) >= 0.8)
                         local eReady = (eCd <= 0.1) and ((now - mhcLastETime) >= 0.5)
 
-                        local targetGroup = getTargetGroup(enemies, myPos)
+                        -- Enchanted Forest Room 5 Ancient Tree Chasm Safety
+                        local isTreeChasm = false
+                        local treeTarget = nil
+                        if slug == "enchanted_forest" then
+                            local TREE_CENTER = Vector3.new(-725.47, 0, 366.39)
+                            for _, e in ipairs(enemies) do
+                                local n = e.model.Name:lower()
+                                if (n:find("tree") or n:find("oak") or (e.pos - TREE_CENTER).Magnitude <= 180.0) and e.hum.Health > 0 then
+                                    isTreeChasm = true
+                                    treeTarget = e
+                                    break
+                                end
+                            end
+                        end
 
-                        if targetGroup then
+                        if isTreeChasm and treeTarget then
+                            local treePos = treeTarget.pos
+                            local distToTree = (myPos - treePos).Magnitude
+                            local platformEdge = Vector3.new(-694.30, -20.97, 456.99)
+                            local distToEdge = (myPos - platformEdge).Magnitude
+
+                            if distToTree <= 115.0 then
+                                hum:MoveTo(myPos)
+                                local lookDir = Vector3.new(treePos.X - myPos.X, 0, treePos.Z - myPos.Z).Unit
+                                hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDir)
+
+                                if qReady then
+                                    mhcLastQTime = now
+                                    castSlot("q", qTool)
+                                end
+                                if eReady then
+                                    mhcLastETime = now
+                                    castSlot("e", eTool)
+                                end
+                            elseif distToEdge <= 300.0 then
+                                hum:MoveTo(platformEdge)
+                            end
+                        else
+                            local targetGroup = getTargetGroup(enemies, myPos)
+
+                            if targetGroup then
                             -- Height Difference Calculation for Staircases / Slopes
                             local heightDiff = math.abs(myPos.Y - targetGroup.center.Y)
                             local effectiveAoELimit = (heightDiff > 12.0) and 50.0 or 82.0
@@ -1389,6 +1435,7 @@ task.spawn(function()
                                 hum:MoveTo(targetPos)
                             end
                         end
+                        end -- Close isTreeChasm else branch
                     end
                 end
                 end
@@ -1958,6 +2005,9 @@ local function carryCreateAndLaunch()
     local dName = bestLadder.dungeon
     local dDiff = bestLadder.diff
     local dReq  = bestLadder.req
+    if bestLadder.slug == "enchanted_forest" then
+        dReq = 0
+    end
 
     Config.CurrentDungeon = dName
     Config.CurrentDiff    = dDiff
@@ -2324,7 +2374,7 @@ local function handleNextTierAndReplay()
             if not nextTierClicked then
                 if replayRemote then
                     pcall(function() replayRemote:FireServer() end)
-                    pcall(function() replayRemote:FireServer({ isHardcore = true, hardcore = true }) end)
+                    pcall(function() replayRemote:FireServer({ isHardcore = Config.HardcoreMode, hardcore = Config.HardcoreMode }) end)
                 end
                 if readyUpRemote then
                     pcall(function() readyUpRemote:FireServer() end)
