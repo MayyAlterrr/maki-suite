@@ -531,7 +531,7 @@ local ProgressionLadder = {
     { dungeon = "Volcanic Chambers",diff = "Insane",    req = 150, slug = "volcanic_chambers",engine = "mhc" },
     { dungeon = "Volcanic Chambers",diff = "Nightmare", req = 155, slug = "volcanic_chambers",engine = "mhc" },
     { dungeon = "Aquatic Temple",   diff = "Nightmare", req = 165, slug = "aquatic_temple",    engine = "mhc" },
-    { dungeon = "Enchanted Forest", diff = "Nightmare", req = 166, slug = "enchanted_forest", engine = "mhc" },
+    { dungeon = "Enchanted Forest", diff = "Nightmare", req = 175, slug = "enchanted_forest", engine = "mhc" },
 }
 
 local function getLivePlayerLevel(playerName)
@@ -1562,7 +1562,7 @@ local function carryCreateAndLaunch()
     local dDiff = bestLadder.diff
     local dReq  = bestLadder.req
     if bestLadder.slug == "enchanted_forest" then
-        dReq = 0
+        dReq = 175
     end
 
     Config.CurrentDungeon = dName
