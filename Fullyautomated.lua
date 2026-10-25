@@ -941,15 +941,21 @@ end
 
 -- Global Checkpoint Recovery Helper
 local function findClosestWaypointIndex(pos, points)
-    if not points or #points == 0 then return 1 end
+    if not points or #points == 0 then return 1, 0 end
     local best = 1
     local minD = math.huge
     for i = 1, #points do
-        local p = Vector3.new(points[i].x, points[i].y, points[i].z)
-        local d = (pos - p).Magnitude
-        if d < minD then
-            minD = d
-            best = i
+        local pt = points[i]
+        if pt then
+            local px = pt.x or pt[1] or 0
+            local py = pt.y or pt[2] or 0
+            local pz = pt.z or pt[3] or 0
+            local p = Vector3.new(px, py, pz)
+            local d = (pos - p).Magnitude
+            if d < minD then
+                minD = d
+                best = i
+            end
         end
     end
     return best, minD
@@ -1459,8 +1465,10 @@ local function bindCarryDeathWatcher(char)
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 8)
     if not hum then return end
 
+    local charAlive = (type(hum.Health) == "number" and hum.Health > 0)
+
     hum.Died:Connect(function()
-        if isCarry and isDungeon() then
+        if isCarry and isDungeon() and charAlive and isMatchUnlocked() then
             local slug, _ = getDungeonSlug()
             local optLadder = typeof(getOptimalDungeonForAlts) == "function" and getOptimalDungeonForAlts() or nil
             local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
@@ -1471,7 +1479,10 @@ local function bindCarryDeathWatcher(char)
     end)
 
     hum.HealthChanged:Connect(function(hp)
-        if isCarry and isDungeon() and hp <= 0 then
+        if type(hp) == "number" and hp > 0 then
+            charAlive = true
+        end
+        if isCarry and isDungeon() and charAlive and type(hp) == "number" and hp <= 0 and isMatchUnlocked() then
             local slug, _ = getDungeonSlug()
             local optLadder = typeof(getOptimalDungeonForAlts) == "function" and getOptimalDungeonForAlts() or nil
             local is175Plus = (slug == "enchanted_forest") or (optLadder and optLadder.req and optLadder.req >= 175)
@@ -2346,9 +2357,9 @@ end
 
 local function execute1to1EnchantedForest(char, hrp, hum, myPos, waypoints)
     if efDeathRetryActive then return end
-    local isDead = (hum and hum.Health <= 0) or (hrp and hrp.Position.Y < -55) or (hum and hum:GetState() == Enum.HumanoidStateType.Dead)
+    local isDead = (hum and hum.Health <= 0) or (hrp and hrp.Position.Y < -80) or (hum and hum:GetState() == Enum.HumanoidStateType.Dead)
     if isDead then
-        triggerEFDeathRetry()
+        triggerEFDeathRetry(string.format("EF 1:1 isDead check (HP: %.1f, Y: %.1f)", (hum and hum.Health or -1), (hrp and hrp.Position.Y or 0)))
         return
     end
     if efIsCastingCombo then return end
@@ -2596,9 +2607,9 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     bindCarryDeathWatcher(newChar)
     local slug, _ = getDungeonSlug()
     if slug == "enchanted_forest" then
-        if isCarry and isDungeon() and (matchStartUnlockTime > 0 or efCurrentWpIndex > 10) and not efDeathRetryActive then
-            print("[Maki EF 💀] CharacterAdded respawn detected in active Enchanted Forest match! Triggering instant retry...")
-            triggerEFDeathRetry()
+        if isCarry and isDungeon() and isMatchUnlocked() and efCurrentWpIndex > 100 and not efDeathRetryActive then
+            print(string.format("[Maki EF 💀] CharacterAdded mid-run respawn detected (WP %d)! Triggering retry...", efCurrentWpIndex))
+            triggerEFDeathRetry(string.format("CharacterAdded mid-run respawn (WP %d)", efCurrentWpIndex))
             return
         end
         efRoom5ShortcutDone = false
@@ -2635,19 +2646,22 @@ task.spawn(function()
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-            -- ANY CAUSE OF DEATH CHECK (Health <= 0, chasm fall Y < -55, or dead state)
-            local isDead = (hum and hum.Health <= 0) or (hrp and hrp.Position.Y < -55) or (hum and hum:GetState() == Enum.HumanoidStateType.Dead)
-            if isDead then
-                local slug, _ = getDungeonSlug()
-                if slug == "enchanted_forest" then
-                    triggerEFDeathRetry()
-                    task.wait(0.2)
-                    continue
+            -- ANY CAUSE OF DEATH CHECK (Only check during an active, unlocked match!)
+            if isMatchUnlocked() and hrp and hum then
+                local isDead = (hum.Health <= 0) or (hrp.Position.Y < -80) or (hum:GetState() == Enum.HumanoidStateType.Dead)
+                if isDead then
+                    local slug, _ = getDungeonSlug()
+                    if slug == "enchanted_forest" then
+                        triggerEFDeathRetry(string.format("MHC loop isDead check (HP: %.1f, Y: %.1f)", hum.Health, hrp.Position.Y))
+                        task.wait(0.2)
+                        continue
+                    end
                 end
             end
 
             if hrp and hum and hum.Health > 0 then
                 if not isMatchUnlocked() then
+                    lastMhcPosBeforeTick = nil
                     hum:MoveTo(hrp.Position)
                     task.wait(0.05)
                 else
@@ -2675,18 +2689,21 @@ task.spawn(function()
 
                     if #waypoints > 0 then
                         if slug == "enchanted_forest" then
-                            -- Level 175+ Mid-Run Death Spawn Guard: If back at spawn after leaving spawn, retry instantly!
-                            if efCurrentWpIndex > 10 and myPos.X > 50 and not efDeathRetryActive then
-                                print(string.format("[Maki EF 💀] Carry respawned back at spawn from WP %d! Triggering instant retry...", efCurrentWpIndex))
-                                triggerEFDeathRetry()
+                            -- Level 175+ Mid-Run Death Spawn Guard: If deep in the dungeon (past Room 2, WP > 100) and suddenly back at the spawn platform, retry!
+                            local efSpawnPos = Vector3.new(109.05, 7.84, -46.66)
+                            if efCurrentWpIndex > 100 and (myPos - efSpawnPos).Magnitude < 25.0 and not efDeathRetryActive then
+                                print(string.format("[Maki EF 💀] Carry respawned back at spawn from WP %d (DistToSpawn: %.1f)! Triggering retry...", efCurrentWpIndex, (myPos - efSpawnPos).Magnitude))
+                                triggerEFDeathRetry(string.format("Mid-run respawn at spawn from WP %d", efCurrentWpIndex))
                                 continue
                             end
 
-                            -- Respawn teleport detection: if position jumps by 28+ studs mid-run, trigger retry
-                            if lastMhcPosBeforeTick and (myPos - lastMhcPosBeforeTick).Magnitude >= 28.0 and not efDeathRetryActive then
-                                print(string.format("[Maki EF 💀] Carry respawn/jump detected (Dist: %.1fs)! Triggering instant retry...", (myPos - lastMhcPosBeforeTick).Magnitude))
-                                triggerEFDeathRetry()
-                                continue
+                            -- Position jump handler: if position jumps by 28+ studs mid-run (e.g. dash/shortcut/sync), resync to closest WP instead of false retry!
+                            if lastMhcPosBeforeTick and (myPos - lastMhcPosBeforeTick).Magnitude >= 28.0 then
+                                local closestIdx, cDist = findClosestWaypointIndex(myPos, waypoints)
+                                if closestIdx then
+                                    efCurrentWpIndex = closestIdx
+                                    print(string.format("[Maki EF 🛡️] Position jump (%.1fs) resynced to WP %d (Dist: %.1fs)", (myPos - lastMhcPosBeforeTick).Magnitude, closestIdx, cDist))
+                                end
                             end
                             lastMhcPosBeforeTick = myPos
 
@@ -3527,6 +3544,7 @@ local function triggerCarryStartDungeon()
 
     if matchStartUnlockTime == 0 then
         matchStartUnlockTime = os.clock() + 3.8
+        lastMhcPosBeforeTick = nil
         print("[Maki Staging ⏳] Staging start triggered! Holding position for 3.8s countdown & barrier drop...")
     end
     local pG = LocalPlayer:FindFirstChild("PlayerGui")
