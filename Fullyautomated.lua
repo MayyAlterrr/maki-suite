@@ -1328,6 +1328,9 @@ local function collectDungeonData()
     if hc and hc:IsA("BoolValue") then
         data.hardcore = hc.Value
         data.isHardcore = hc.Value
+    else
+        data.hardcore = true
+        data.isHardcore = true
     end
     local dung = Workspace:FindFirstChild("dungeon")
     if dung then
@@ -1400,10 +1403,13 @@ local function triggerEFDeathRetry(reason)
         efBossHitsLanded = 0
         efIsCastingCombo = false
 
-        -- 1. Fire Remote with complete Dungeon Data
+        -- 1. Fire Remote with complete Dungeon Data (Always Hardcore)
         local data = collectDungeonData()
+        data.hardcore = true
+        data.isHardcore = true
         if replayRemote then
             pcall(function() replayRemote:FireServer(data) end)
+            pcall(function() replayRemote:FireServer({ isHardcore = true, hardcore = true }) end)
             pcall(function() replayRemote:FireServer("bossKilled") end)
             pcall(function() replayRemote:FireServer() end)
         end
