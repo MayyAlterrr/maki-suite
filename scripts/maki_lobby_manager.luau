@@ -50,7 +50,7 @@ local function loadSettings()
         potatoMode = true,
         autoReplay = true,
         autoSell = true,
-        hardcore = true,     -- Default: Hardcore (+50% XP/Gold)
+        hardcore = false,    -- Default: Non-Hardcore as requested
         autoCreate = true    -- Default: Auto-Create immediately upon joining lobby
     }
     pcall(function()
