@@ -186,7 +186,7 @@ local function loadConfig()
     if Config.NotifyCollects == nil then Config.NotifyCollects = true end
     if not Config.AltFpsCap then Config.AltFpsCap = 12 end
     Config.CarryFpsCap = 55
-    Config.HardcoreMode = true
+    if Config.HardcoreMode == nil then Config.HardcoreMode = true end
 end
 
 local function saveConfig()
@@ -2927,17 +2927,17 @@ local function carryCreateAndLaunch()
     Config.CurrentDiff    = dDiff
     saveConfig()
 
-    Config.HardcoreMode = true
-    print(string.format("[Maki Host] 🏰 Creating Target Staging Lobby: %s (%s) [Lowest: %s Lv %d, Req: %d] | Hardcore: true...",
-        dName, dDiff, altName, curLvl, dReq))
+    local isHc = (Config.HardcoreMode ~= false)
+    print(string.format("[Maki Host] 🏰 Creating Target Staging Lobby: %s (%s) [Lowest: %s Lv %d, Req: %d] | Hardcore: %s...",
+        dName, dDiff, altName, curLvl, dReq, tostring(isHc)))
 
     local ok, res = pcall(function()
-        return createLobbyRemote:InvokeServer(dName, dDiff, dReq, true, true, false)
+        return createLobbyRemote:InvokeServer(dName, dDiff, dReq, isHc, true, false)
     end)
     if not ok or res ~= true then
         pcall(function()
             local ok2, res2 = pcall(function()
-                return createLobbyRemote:InvokeServer(dName, dDiff, true, true)
+                return createLobbyRemote:InvokeServer(dName, dDiff, isHc, true)
             end)
             if ok2 and res2 == true then
                 ok = true
@@ -3310,8 +3310,8 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = pGuiRef
 
 local frame = Instance.new("Frame", screenGui)
-frame.Size = UDim2.new(0, 290, 0, 280)
-frame.Position = UDim2.new(0, 20, 0.5, -140)
+frame.Size = UDim2.new(0, 290, 0, 305)
+frame.Position = UDim2.new(0, 20, 0.5, -152)
 frame.BackgroundColor3 = Color3.fromRGB(16, 20, 32)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -3368,7 +3368,7 @@ tabDiscordBtn.Text = "💬 DISCORD"
 Instance.new("UICorner", tabDiscordBtn).CornerRadius = UDim.new(0, 4)
 
 local pageDashboard = Instance.new("Frame", frame)
-pageDashboard.Size = UDim2.new(1, -16, 0, 222)
+pageDashboard.Size = UDim2.new(1, -16, 0, 244)
 pageDashboard.Position = UDim2.new(0, 8, 0, 52)
 pageDashboard.BackgroundTransparency = 1
 pageDashboard.Visible = true
@@ -3495,9 +3495,26 @@ autoProgToggleBtn.Activated:Connect(function()
     saveConfig()
 end)
 
+local hardcoreToggleBtn = Instance.new("TextButton", pageDashboard)
+hardcoreToggleBtn.Size = UDim2.new(1, 0, 0, 22)
+hardcoreToggleBtn.Position = UDim2.new(0, 0, 0, 152)
+hardcoreToggleBtn.BackgroundColor3 = (Config.HardcoreMode ~= false) and Color3.fromRGB(180, 40, 40) or Color3.fromRGB(60, 60, 60)
+hardcoreToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hardcoreToggleBtn.TextSize = 7.5
+hardcoreToggleBtn.Font = Enum.Font.GothamBold
+hardcoreToggleBtn.Text = (Config.HardcoreMode ~= false) and "🔥 HARDCORE MODE: ON (+50% XP/Gold)" or "🔥 HARDCORE MODE: OFF"
+Instance.new("UICorner", hardcoreToggleBtn).CornerRadius = UDim.new(0, 4)
+
+hardcoreToggleBtn.Activated:Connect(function()
+    Config.HardcoreMode = not (Config.HardcoreMode ~= false)
+    hardcoreToggleBtn.Text = Config.HardcoreMode and "🔥 HARDCORE MODE: ON (+50% XP/Gold)" or "🔥 HARDCORE MODE: OFF"
+    hardcoreToggleBtn.BackgroundColor3 = Config.HardcoreMode and Color3.fromRGB(180, 40, 40) or Color3.fromRGB(60, 60, 60)
+    saveConfig()
+end)
+
 local autoSellToggleBtn = Instance.new("TextButton", pageDashboard)
 autoSellToggleBtn.Size = UDim2.new(1, 0, 0, 22)
-autoSellToggleBtn.Position = UDim2.new(0, 0, 0, 154)
+autoSellToggleBtn.Position = UDim2.new(0, 0, 0, 176)
 autoSellToggleBtn.BackgroundColor3 = Config.AutoSellTrashes and Color3.fromRGB(30, 120, 60) or Color3.fromRGB(60, 60, 60)
 autoSellToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 autoSellToggleBtn.TextSize = 7.5
@@ -3514,7 +3531,7 @@ end)
 
 local mainActionBtn = Instance.new("TextButton", pageDashboard)
 mainActionBtn.Size = UDim2.new(1, 0, 0, 26)
-mainActionBtn.Position = UDim2.new(0, 0, 0, 180)
+mainActionBtn.Position = UDim2.new(0, 0, 0, 202)
 mainActionBtn.BackgroundColor3 = isCarry and Color3.fromRGB(0, 160, 120) or Color3.fromRGB(140, 80, 220)
 mainActionBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 mainActionBtn.TextSize = 8.5
